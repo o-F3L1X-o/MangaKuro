@@ -7,7 +7,7 @@
 [![Komga Ready](https://img.shields.io/badge/Komga-Ready-purple.svg)](https://komga.org)
 [![Donate PayPal](https://img.shields.io/badge/Donate-PayPal-00457C.svg)](https://www.paypal.com/donate/?hosted_button_id=K2L2FEZ2NS6TY)
 
-Aplicación web profesional, ligera y de alto rendimiento para organizar, limpiar páginas, fusionar/separar tomos y capítulos, editar metadatos `ComicInfo.xml` y optimizar archivos de cómics y manga en formatos **.CBZ, .CBR, .ZIP, .RAR, .PDF y .EPUB** antes de transferirlos a **Komga**.
+Aplicación web profesional, ligera y de alto rendimiento para organizar, limpiar páginas, fusionar/separar tomos y capítulos, editar metadatos `ComicInfo.xml` y optimizar archivos de cómics y manga en formatos **.CBZ, .CBR, .ZIP, .RAR, .PDF y .EPUB** antes de transferirlos a tu repositorio personal como komga o kavita.
 
 Accesible desde cualquier dispositivo en tu red local (PC, tablet o móvil) a través de tu navegador (`http://<TU_IP>:8000`).
 
