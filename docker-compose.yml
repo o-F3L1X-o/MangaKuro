@@ -2,6 +2,7 @@ version: '3.8'
 
 services:
   mangakuro:
+    image: ghcr.io/o-f3l1x-o/mangakuro:latest
     build:
       context: .
       dockerfile: Dockerfile
@@ -10,9 +11,9 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      # Datos de la aplicación (sesiones temporales y configuración)
+      # Datos de la aplicación (sesiones en caliente y configuración)
       - ./data:/app/data
-      # Ruta de tu biblioteca para Komga (puedes cambiarla por tu ruta real de comics/manga)
+      # Carpeta destino leída por Komga (ajústala a tu biblioteca de cómics)
       - ./data/export:/comics_library
     environment:
       - EXPORT_DIR=/comics_library
