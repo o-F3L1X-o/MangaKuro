@@ -13,20 +13,11 @@ Accesible desde cualquier dispositivo en tu red local (PC, tablet o móvil) a tr
 
 ---
 
-## ☕ Apoyar el proyecto / Invítame a un café
+## ☕ Apoyar el proyecto
 
 **MangaKuro** es un proyecto de código abierto libre y gratuito bajo licencia **GNU GPLv3**. Si esta herramienta te resulta de utilidad, te ahorra horas organizando tus series o simplemente deseas apoyar el proyecto, puedes colaborar con una donación voluntaria:
 
 [![Donate with PayPal](https://img.shields.io/badge/PayPal-Donar-00457C?style=for-the-badge&logo=paypal&logoColor=white)](https://www.paypal.com/donate/?hosted_button_id=K2L2FEZ2NS6TY)
-
-👉 **[Hacer una donación mediante PayPal](https://www.paypal.com/donate/?hosted_button_id=K2L2FEZ2NS6TY)** *(Soporta importes rápidos de 1€, 5€, 10€ o personalizado, y es configurable desde los Ajustes de la aplicación)*
-
-### ¿En qué se invierten las donaciones?
-1. **Mantenimiento y compatibilidad continua**: Actualización de dependencias críticas de backend y frontend (motores de imagen Pillow, PyMuPDF, librerías de empaquetado de archivos y seguridad).
-2. **Servidores e infraestructura de pruebas**: Entornos de prueba automatizados para verificar compatibilidad multiplataforma (Windows, Linux, Docker, NAS Synology/QNAP/Unraid).
-3. **Nuevas funcionalidades e integraciones**: Desarrollo de nuevas herramientas (sincronización bidireccional con bibliotecas, soporte ampliado de formatos, IA para optimización visual y mejoras en cortadores de Webtoon).
-
-¡Cualquier aportación o estrella ⭐ en GitHub es enormemente apreciada y ayuda a mantener el proyecto vivo e independiente!
 
 ---
 
