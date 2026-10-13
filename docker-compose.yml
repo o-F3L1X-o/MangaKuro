@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  mangakuro:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mangakuro
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      # Datos de la aplicación (sesiones temporales y configuración)
+      - ./data:/app/data
+      # Ruta de tu biblioteca para Komga (puedes cambiarla por tu ruta real de comics/manga)
+      - ./data/export:/comics_library
+    environment:
+      - EXPORT_DIR=/comics_library
+      - PYTHONUNBUFFERED=1
