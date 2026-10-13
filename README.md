@@ -1,131 +1,161 @@
-# 📚 MangaKuro • ULTIMATE COMIC & MANGA SUITE
+# 📚 MangaKuro • Ultimate Comic & Manga Suite
 
-[![Version](https://img.shields.io/badge/version-v0.9.5--rc1-indigo.svg)](https://github.com/)
+[![Version](https://img.shields.io/badge/version-v0.9.5--rc1-indigo.svg)](https://github.com/o-F3L1X-o/MangaKuro)
 [![License: GPLv3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
-[![FastAPI](https://img.shields.io/badge/Backend-FastAPI-009688.svg)](https://fastapi.tiangolo.com)
-[![React](https://img.shields.io/badge/Frontend-React_18_+_Vite-61dafb.svg)](https://react.dev)
-[![Komga Ready](https://img.shields.io/badge/Komga-Ready-purple.svg)](https://komga.org)
-[![Donate PayPal](https://img.shields.io/badge/Donate-PayPal-00457C.svg)](https://www.paypal.com/donate/?hosted_button_id=K2L2FEZ2NS6TY)
+[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED.svg?logo=docker&logoColor=white)](docker-compose.yml)
+[![FastAPI](https://img.shields.io/badge/Backend-FastAPI-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
+[![React](https://img.shields.io/badge/Frontend-React_18_+_Vite-61dafb.svg?logo=react&logoColor=black)](https://react.dev)
+[![Komga Ready](https://img.shields.io/badge/Komga-Compatible-purple.svg)](https://komga.org)
 
-Aplicación web profesional, ligera y de alto rendimiento para organizar, limpiar páginas, fusionar/separar tomos y capítulos, editar metadatos `ComicInfo.xml` y optimizar archivos de cómics y manga en formatos **.CBZ, .CBR, .ZIP, .RAR, .PDF y .EPUB** antes de transferirlos a tu repositorio personal como komga o kavita.
+**MangaKuro** es una suite web integral, ligera y de alto rendimiento diseñada para la preparación, curación, optimización y edición de metadatos de colecciones de cómics y manga antes de incorporarlos a tu servidor personal como **Komga** o **Kavita**.
 
-Accesible desde cualquier dispositivo en tu red local (PC, tablet o móvil) a través de tu navegador (`http://<TU_IP>:8000`).
-
----
-
-## ☕ Apoyar el proyecto
-
-**MangaKuro** es un proyecto de código abierto libre y gratuito bajo licencia **GNU GPLv3**. Si esta herramienta te resulta de utilidad, te ahorra horas organizando tus series o simplemente deseas apoyar el proyecto, puedes colaborar con una donación voluntaria:
-
-[![Donate with PayPal](https://img.shields.io/badge/PayPal-Donar-00457C?style=for-the-badge&logo=paypal&logoColor=white)](https://www.paypal.com/donate/?hosted_button_id=K2L2FEZ2NS6TY)
+Permite procesar archivos en formatos **.CBZ, .CBR, .ZIP, .RAR, .PDF y .EPUB**, reordenar o limpiar páginas sin latencia, dividir dobles páginas, segmentar tiras de webtoon y estandarizar metadatos `ComicInfo.xml` desde cualquier dispositivo de la red local.
 
 ---
 
-## 🚀 Inicio Rápido
+## 🚀 Despliegue Rápido
 
-### Opción 1: En Windows Nativo (Sin Docker)
-Haz doble clic en el archivo:
-```bat
-run.bat
+### Opción 1: Docker Compose (Recomendado para Servidores, NAS y Linux)
+
+MangaKuro se compila y publica automáticamente como imagen oficial en **GitHub Container Registry (`ghcr.io`)**. Puedes desplegarlo en segundos sin necesidad de compilar código localmente:
+
+```yaml
+version: '3.8'
+
+services:
+  mangakuro:
+    image: ghcr.io/o-f3l1x-o/mangakuro:latest
+    container_name: mangakuro
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data                        # Almacenamiento y sesiones en caliente
+      - /tu/ruta/comics:/comics_library         # Carpeta leída por Komga
+    environment:
+      - EXPORT_DIR=/comics_library
+    restart: unless-stopped
 ```
-El script configurará automáticamente el entorno virtual de Python, instalará las dependencias necesarias y abrirá la aplicación en tu navegador en `http://localhost:8000` o la IP de tu red local.
 
----
-
-### Opción 2: Con Docker Compose (Ideal para Servidores / NAS / Linux)
+Inicia el servicio ejecutando:
 ```bash
-docker compose up -d --build
+docker compose up -d
 ```
-El servidor quedará corriendo en segundo plano en el puerto `8000`.
-* Puedes ajustar en `docker-compose.yml` la ruta de tu biblioteca de cómics donde Komga lee los archivos para exportar directamente con un solo clic.
+
+O si prefieres utilizar **Docker CLI** directamente:
+```bash
+docker run -d \
+  --name mangakuro \
+  -p 8000:8000 \
+  -v ./data:/app/data \
+  -v /tu/ruta/comics:/comics_library \
+  -e EXPORT_DIR=/comics_library \
+  --restart unless-stopped \
+  ghcr.io/o-f3l1x-o/mangakuro:latest
+```
+
+El servicio estará disponible de inmediato en `http://localhost:8000` (o la IP de tu servidor o NAS).
+
+---
+
+### Opción 2: Windows Nativo (Sin Docker)
+
+Si prefieres ejecutarlo directamente en tu equipo con Windows:
+1. Haz doble clic en el script:
+   ```bat
+   run.bat
+   ```
+2. El script configurará automáticamente el entorno virtual de Python, instalará las dependencias necesarias y abrirá la aplicación en tu navegador web.
 
 ---
 
 ## ✨ Características Principales
 
-### ⚡ Cero Lag: Arquitectura de Sesión en Caliente (*Staging*)
-* **Edición instantánea**: Reordenar páginas mediante arrastrar y soltar (*drag & drop*), rotar 90°, cambiar portadas o eliminar páginas se guarda en milisegundos en el servidor sin recomprimir archivos pesados en cada cambio.
-* **Extracción acelerada con PyMuPDF (MuPDF en C)**: Rasteriza y extrae páginas de cómics en PDF a máxima velocidad sin sobrecargar los núcleos de la CPU.
-* **Virtualización con `LazyImage`**: Carga ultra-ligera basada en `IntersectionObserver`; las páginas fuera de pantalla no consumen memoria gráfica ni saturan el navegador, permitiendo abrir cómics de más de 1.000 páginas fluidamente.
+### ⚡ Arquitectura de Sesión en Caliente (*Staging*)
+* **Edición instantánea**: Reordenar páginas mediante arrastrar y soltar (*drag & drop*), rotar, intercambiar portadas o eliminar descartes se refleja en milisegundos sin recomprimir archivos pesados en cada acción.
+* **Motor acelerado con PyMuPDF (C / MuPDF)**: Extracción y rasterizado de páginas de cómics en PDF a velocidad nativa sin saturar la CPU.
+* **Virtualización eficiente**: Renderizado basado en `IntersectionObserver`; las páginas fuera del viewport no consumen memoria gráfica, garantizando fluidez incluso en tomos con cientos de páginas.
 
-### 📘 Gestión Avanzada de Tomos vs. Capítulos
-* **Identificación visual clara**: Distintivos diferenciados para **Tomos Recopilatorios** (📘 morado/índigo) y **Capítulos Sueltos** (📄 ámbar/naranja).
-* **Fusión de Capítulos (*Merge to Volume*)**: Selecciona múltiples capítulos y únelos en orden dentro de un tomo único.
-* **Portadillas Tankōbon automáticas**: Inserta portadillas de separación entre capítulos generadas dinámicamente con número, título y tipografía minimalista.
-* **Separación de Capítulos (*Extract to Chapter*)**: Extrae un rango de páginas de un tomo para crear un nuevo capítulo o transferirlas a otro tomo existente.
-* **Renombrado y tipado en caliente**: Modifica la serie, número o volumen al instante con un solo clic.
+### 📘 Gestión Avanzada de Tomos y Capítulos
+* **Diferenciación estructural**: Identificación visual inmediata entre **Tomos Recopilatorios** (Tankōbon) y **Capítulos Sueltos**.
+* **Fusión de Capítulos (*Merge*)**: Combina múltiples entregas en un único tomo continuo con numeración coherente.
+* **Portadillas Tankōbon automáticas**: Generación e inserción opcional de portadillas divisorias de estilo minimalista entre capítulos.
+* **Extracción de Capítulos (*Extract*)**: Separa rangos de páginas para conformar nuevos capítulos o transferirlos a otro volumen.
+* **Organización por Colecciones**: Agrupación automática de series en el panel lateral con herramientas de ordenación alfabética y por número.
 
-### 📝 Metadatos Estándar Komga (`ComicInfo.xml`)
-* **ComicInfo 100% Individual**: Cada tomo o capítulo mantiene su propio archivo de metadatos independiente sin solapamientos.
-* **Edición en Lote y Clonación Inteligente**: Aplica metadatos comunes (Guionista, Dibujante, Géneros, Sinopsis, Editorial) a todos los tomos marcados respetando sus números de volumen individuales.
-* **Autocompletado inteligente por nombre**: Reconoce automáticamente Serie, Volumen, Número y Scanlation a partir del nombre del archivo.
+### 📝 Editor de Metadatos Estándar (`ComicInfo.xml`)
+* **Aislamiento por sesión**: Cada tomo o capítulo mantiene su propio archivo de metadatos `ComicInfo.xml` independiente.
+* **Edición y clonación en lote**: Copia datos compartidos (Guionista, Dibujante, Géneros, Sinopsis, Editorial, Año) a múltiples volúmenes conservando sus números individuales.
+* **Inferencia inteligente**: Detección y autocompletado de Serie, Volumen y Número a partir del nombre del archivo.
 
 ### 🇰🇷 Soporte Integral para Webtoons (Manhwa)
-* **Visor Cascada Vertical Continua**: Modo de lectura sin saltos de página con desplazamiento suave.
-* **Paginación en bloques de seguridad**: Divide webtoons de cientos de tiras en bloques navegables para evitar saturaciones de memoria gráfica.
-* **Cortador Inteligente (*Webtoon Slicer*)**: Trocea tiras verticales de gran longitud (ej. 800 x 20.000 px) detectando automáticamente espacios en blanco entre viñetas sin cortar bocadillos ni diálogos.
+* **Visor Cascada Vertical**: Modo de lectura vertical continuo con desplazamiento fluido.
+* **Paginación segura**: Lectura por bloques para proteger la memoria gráfica en tiras kilométricas.
+* **Cortador Inteligente (*Smart Slicer*)**: Trocea tiras verticales de gran altura (ej. 800 × 25.000 px) detectando automáticamente los espacios en blanco entre viñetas sin cortar diálogos ni bocadillos.
 
 ### 🇯🇵 Soporte Especial para Manga
-* **Dirección de Lectura Oriental (RTL)**: Navegación nativa de derecha a izquierda con inversión de controles.
-* **Divisor de Dobles Páginas (*Spread Splitter*)**: Corta páginas dobles escaneadas en 2 páginas individuales respetando el orden de lectura japonés u occidental.
+* **Lectura Derecha a Izquierda (RTL)**: Modo de lectura nativo oriental con inversión de teclado y controles.
+* **Divisor de Dobles Páginas (*Spread Splitter*)**: Corta pliegos dobles escaneados en 2 páginas individuales preservando el orden de lectura correcto.
 
 ### 🖥️ Monitor de Rendimiento en Tiempo Real (HUD)
-* Panel flotante y minimizable que monitoriza en vivo:
-  - Consumo de **CPU** (total del sistema y del proceso servidor).
-  - Consumo de **Memoria RAM** (sistema, backend y pestaña del navegador).
-  - Espacio ocupado en **Staging** y espacio libre en disco.
-  - Detección inteligente de **sesiones huérfanas** con botón de purga rápida para liberar almacenamiento en disco.
+* Panel de diagnóstico minimizable con telemetría en vivo:
+  - Consumo de **CPU** y **Memoria RAM** (backend y sistema).
+  - Espacio ocupado en almacenamiento temporal (*Staging*) y espacio libre en disco.
+  - Detección de sesiones inactivas y herramienta de purga en un solo clic.
 
-### 📦 Exportación y Optimización
-* **Compresión WebP / JPG / Original**: Reduce el peso de los cómics entre un 50% y un 70% sin pérdida apreciable de nitidez visual.
-* **Normalización de nombres**: Renombra internamente las páginas a secuencias numéricas estandarizadas (`0001.webp`, `0002.webp`, etc.) para máxima compatibilidad con cualquier lector o biblioteca.
-* **Disparo automático de escaneo en Komga**: Notifica a la API de tu servidor Komga tras la exportación para que indexe los nuevos tomos al instante.
-* **Cola de exportación en segundo plano**: Exporta múltiples cómics o series completas de manera asíncrona sin bloquear la interfaz de usuario.
+### 📦 Exportación Asíncrona y Optimización
+* **Conversión WebP / JPEG / Formato Original**: Reduce el volumen de almacenamiento entre un 50% y un 70% preservando la nitidez visual.
+* **Normalización de archivos**: Estandariza la secuencia de imágenes (`0001.webp`, `0002.webp`, etc.) para máxima compatibilidad con cualquier lector.
+* **Notificación directa a Komga**: Disparo opcional de re-escaneo en la API de Komga tras finalizar la exportación.
+* **Cola asíncrona**: Procesa múltiples exportaciones en segundo plano sin interrumpir la navegación.
 
 ---
 
 ## 📁 Estructura del Proyecto
 
 ```
-APP_COMICS/
+MangaKuro/
 ├── backend/
 │   ├── app/
-│   │   ├── main.py                # Servidor FastAPI, endpoints REST y servicio estático SPA
-│   │   ├── config.py              # Ajustes, versión y rutas de datos
+│   │   ├── main.py                # Servidor FastAPI, API REST y servicio de estáticos SPA
+│   │   ├── config.py              # Ajustes globales y resolución de rutas
 │   │   └── services/
 │   │       ├── comic_parser.py    # Extracción CBZ, CBR, ZIP, RAR, PDF y EPUB
 │   │       ├── comic_info.py      # Gestor y parser de ComicInfo.xml
-│   │       ├── image_processor.py # Miniaturas, rotación y división de dobles páginas
+│   │       ├── image_processor.py # Miniaturas, rotación y división de páginas dobles
 │   │       ├── webtoon_slicer.py  # Cortador inteligente de tiras verticales
-│   │       ├── session_manager.py # Motor de sesiones en caliente y limpieza
-│   │       └── exporter.py        # Compresión WebP/JPG y empaquetador CBZ
+│   │       ├── session_manager.py # Motor de sesiones en caliente y almacenamiento
+│   │       └── exporter.py        # Compresión WebP/JPEG y empaquetador CBZ
 │   ├── requirements.txt
 │   └── tests/                     # Batería de pruebas automatizadas
 ├── frontend/
 │   ├── src/
-│   │   ├── components/            # Componentes React (PageGrid, Header, Sidebar, Modals, etc.)
+│   │   ├── components/            # Componentes React (PageGrid, Header, Sidebar, etc.)
 │   │   ├── i18n/                  # Internacionalización (Español / English)
 │   │   ├── theme/                 # Soporte Modo Claro y Modo Oscuro
 │   │   ├── api.ts                 # Cliente HTTP con Axios
-│   │   ├── version.ts             # Versión, marca y enlaces de donación
-│   │   └── App.tsx                # Aplicación principal
+│   │   ├── version.ts             # Versión y metadatos de la aplicación
+│   │   └── App.tsx                # Vista y estado principal
 │   ├── package.json
 │   └── vite.config.ts
 ├── data/
-│   ├── staging/                   # Directorio de trabajo en caliente
-│   └── export/                    # Carpeta de exportación final para Komga
-├── .github/
-│   └── FUNDING.yml                # Configuración de patrocinio de GitHub Sponsors / PayPal
-├── LICENSE                        # Licencia de código abierto GNU General Public License v3.0
-├── Dockerfile                     # Construcción multi-etapa para Docker
-├── docker-compose.yml             # Orquestación con Docker Compose
-└── run.bat                        # Script de inicio en 1 clic para Windows
+│   ├── staging/                   # Directorio de trabajo en caliente (.gitignored)
+│   └── export/                    # Destino de exportación (.gitignored)
+├── Dockerfile                     # Construcción multi-etapa
+├── docker-compose.yml             # Orquestación de servicios
+├── LICENSE                        # Licencia GNU General Public License v3.0
+└── run.bat                        # Script de inicio rápido en Windows
 ```
 
 ---
 
 ## 📄 Licencia
 
-Este proyecto está distribuido bajo la **GNU General Public License v3.0 (GPLv3)**. Consulta el archivo [LICENSE](LICENSE) para más detalles.
+Este proyecto está bajo la licencia **GNU General Public License v3.0 (GPLv3)**. Consulta el archivo [LICENSE](LICENSE) para más información.
 
-Eres libre de utilizar, modificar y redistribuir este software respetando los términos de la licencia GPLv3.
+Eres libre de usar, modificar y distribuir esta aplicación respetando los términos de la licencia GPLv3.
+
+---
+
+## ☕ Apoyo al Proyecto
+
+MangaKuro es software libre y de código abierto. Si la herramienta te resulta de utilidad y deseas colaborar con su mantenimiento y desarrollo continuo, puedes invitar a un café mediante [PayPal](https://www.paypal.com/donate/?hosted_button_id=K2L2FEZ2NS6TY) o apoyar a través de GitHub Sponsors.
