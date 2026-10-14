@@ -156,4 +156,4 @@ Eres libre de usar, modificar y distribuir esta aplicación respetando los térm
 
 ## ☕ Apoyo al Proyecto
 
-MangaKuro es software libre y de código abierto. Si la herramienta te resulta de utilidad y deseas colaborar con su mantenimiento y desarrollo continuo, puedes invitar a un café mediante [PayPal](https://www.paypal.com/donate/?hosted_button_id=K2L2FEZ2NS6TY) o apoyar a través de GitHub Sponsors.
+MangaKuro es software libre y de código abierto. Si la herramienta te resulta de utilidad y deseas colaborar con su mantenimiento y desarrollo continuo, puedes invitar a un café mediante [PayPal](https://www.paypal.com/donate/?hosted_button_id=K2L2FEZ2NS6TY).
