@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   mangakuro:
     image: ghcr.io/o-f3l1x-o/mangakuro:latest

@@ -20,8 +20,6 @@ Permite procesar archivos en formatos **.CBZ, .CBR, .ZIP, .RAR, .PDF y .EPUB**, 
 MangaKuro se compila y publica automáticamente como imagen oficial en **GitHub Container Registry (`ghcr.io`)**. Puedes desplegarlo en segundos sin necesidad de compilar código localmente:
 
 ```yaml
-version: '3.8'
-
 services:
   mangakuro:
     image: ghcr.io/o-f3l1x-o/mangakuro:latest
