@@ -133,6 +133,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {/* Column A: Export & Library */}
               <div className="space-y-4">
+                {/* Staging Storage Path */}
+                <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-comic-950/60 border border-slate-200 dark:border-comic-800 space-y-1.5 shadow-sm">
+                  <label className="block text-xs font-bold text-slate-900 dark:text-slate-200">
+                    {t('settings.stagingPath')}
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.staging_directory || ''}
+                    onChange={(e) => setFormData({ ...formData, staging_directory: e.target.value })}
+                    placeholder={t('settings.stagingPathPlaceholder')}
+                    className="w-full px-3 py-2 rounded-lg bg-white dark:bg-comic-950 border border-slate-300 dark:border-comic-700/80 text-slate-900 dark:text-white text-xs font-mono focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 focus:outline-none transition"
+                  />
+                  <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
+                    {t('settings.stagingPathDesc')}
+                  </p>
+                </div>
+
                 {/* Komga Library Path */}
                 <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-comic-950/60 border border-slate-200 dark:border-comic-800 space-y-1.5 shadow-sm">
                   <label className="block text-xs font-bold text-slate-900 dark:text-slate-200">

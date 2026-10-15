@@ -45,10 +45,41 @@ class SessionManifest(BaseModel):
     item_type: str = "tomo"  # "tomo" or "capitulo"
 
 class SessionManager:
-    def __init__(self, staging_dir: Path = DEFAULT_STAGING_DIR):
-        self.staging_dir = staging_dir
-        self.staging_dir.mkdir(parents=True, exist_ok=True)
+    def __init__(self, staging_dir: Optional[Path] = None):
+        self._custom_staging_dir: Optional[Path] = Path(staging_dir) if staging_dir else None
         # Background job progress tracker: { session_id: { status, percent, current, total, message, error } }
+        self.jobs: Dict[str, Dict[str, Any]] = {}
+        self.slice_jobs: Dict[str, Dict[str, Any]] = {}
+        self._manifest_cache: Dict[str, SessionManifest] = {}
+        self._history_snapshots: Dict[str, List[Dict[str, Any]]] = {}
+        self._stats_cache: Optional[Dict[str, Any]] = None
+        self._stats_cache_time: float = 0.0
+        self._stats_lock = threading.Lock()
+
+    @property
+    def staging_dir(self) -> Path:
+        if self._custom_staging_dir:
+            self._custom_staging_dir.mkdir(parents=True, exist_ok=True)
+            return self._custom_staging_dir
+        try:
+            from app.config import load_settings
+            settings = load_settings()
+            if settings.staging_directory:
+                p = Path(settings.staging_directory)
+                p.mkdir(parents=True, exist_ok=True)
+                return p
+        except Exception:
+            pass
+        DEFAULT_STAGING_DIR.mkdir(parents=True, exist_ok=True)
+        return DEFAULT_STAGING_DIR
+
+    @staging_dir.setter
+    def staging_dir(self, value: Optional[Path]):
+        if value:
+            self._custom_staging_dir = Path(value)
+            self._custom_staging_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            self._custom_staging_dir = None
         self.jobs: Dict[str, Dict[str, Any]] = {}
         self.slice_jobs: Dict[str, Dict[str, Any]] = {}
         self._manifest_cache: Dict[str, SessionManifest] = {}

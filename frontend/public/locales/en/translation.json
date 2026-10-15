@@ -258,6 +258,9 @@
   },
   "settings": {
     "settingsTitle": "System Settings",
+    "stagingPath": "Staging Storage Path (Disk Folder)",
+    "stagingPathPlaceholder": "e.g. /app/data/staging or /mnt/pc_windows/mangakuro/staging",
+    "stagingPathDesc": "Physical directory where pages are unpacked and processed in hot memory/disk. Change this if you want Staging to reside on another mounted drive or network volume.",
     "komgaLibPath": "Komga Library Path (Disk Folder)",
     "komgaLibPathPlaceholder": "e.g. /comics or D:\\Library\\Manga",
     "komgaLibPathDesc": "Root folder where Komga reads your comics. When exporting, you can save directly to this path.",

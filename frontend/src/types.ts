@@ -77,6 +77,7 @@ export interface ComicSessionSummary {
 
 export interface AppSettings {
   export_directory: string;
+  staging_directory?: string;
   default_compression: string;
   default_quality: number;
   komga_server_url: string;

@@ -27,10 +27,13 @@ COPY backend/app ./app
 # Copiar frontend compilado desde la etapa 1
 COPY --from=frontend-builder /build/dist /app/frontend/dist
 
-# Crear directorios de datos para volúmenes
-RUN mkdir -p /app/data/staging /app/data/export
+# Crear directorios de datos para volúmenes y enlace de compatibilidad
+RUN mkdir -p /app/data/staging /app/data/export && ln -s /app/data /data
 
 EXPOSE 8000
+ENV DATA_DIR=/app/data
+ENV STAGING_DIR=/app/data/staging
+ENV EXPORT_DIR=/app/data/export
 ENV PYTHONUNBUFFERED=1
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

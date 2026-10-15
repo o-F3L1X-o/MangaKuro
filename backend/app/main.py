@@ -699,6 +699,8 @@ async def get_settings():
 @app.post("/api/settings")
 async def set_settings(new_settings: AppSettings):
     save_settings(new_settings)
+    if new_settings.staging_directory:
+        session_manager.staging_dir = Path(new_settings.staging_directory)
     return {"success": True, "settings": new_settings}
 
 # --- Frontend Static Files Serving & SPA Fallback ---

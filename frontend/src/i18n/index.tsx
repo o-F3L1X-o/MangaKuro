@@ -30,7 +30,7 @@ if (!i18n.isInitialized) {
       fallbackLng: 'es',
       supportedLngs: ['es', 'en'],
       backend: {
-        loadPath: '/locales/{{lng}}/translation.json?v=13',
+        loadPath: '/locales/{{lng}}/translation.json?v=14',
       },
       interpolation: {
         escapeValue: false, // React already escapes values

@@ -116,6 +116,7 @@ export const App: React.FC = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [settings, setSettings] = useState<AppSettings>({
     export_directory: '',
+    staging_directory: '',
     default_compression: 'webp',
     default_quality: 85,
     komga_server_url: '',

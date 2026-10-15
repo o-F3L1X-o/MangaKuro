@@ -258,6 +258,9 @@
   },
   "settings": {
     "settingsTitle": "Configuración del Sistema",
+    "stagingPath": "Ruta de almacenamiento de Staging (Disco)",
+    "stagingPathPlaceholder": "ej. /app/data/staging o /mnt/pc_windows/mangakuro/staging",
+    "stagingPathDesc": "Carpeta física donde se descomprimen y procesan las páginas temporalmente en caliente. Cámbiala si deseas que el Staging resida en otro disco o volumen montado.",
     "komgaLibPath": "Ruta de la Biblioteca de Komga (Carpeta en Disco)",
     "komgaLibPathPlaceholder": "ej. /comics o D:\\Biblioteca\\Manga",
     "komgaLibPathDesc": "Carpeta raíz donde Komga lee tus cómics. Al exportar, podrás guardar directamente en esta ruta.",

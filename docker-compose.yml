@@ -9,10 +9,12 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      # Datos de la aplicación (sesiones en caliente y configuración)
+      # Datos de la aplicación (sesiones en caliente, staging y configuración)
       - ./data:/app/data
       # Carpeta destino leída por Komga (ajústala a tu biblioteca de cómics)
       - ./data/export:/comics_library
     environment:
+      - DATA_DIR=/app/data
+      - STAGING_DIR=/app/data/staging
       - EXPORT_DIR=/comics_library
       - PYTHONUNBUFFERED=1
