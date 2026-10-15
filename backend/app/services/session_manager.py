@@ -22,7 +22,38 @@ from app.services.webtoon_slicer import (
 )
 from app.services.chapter_generator import generate_chapter_card
 
+import collections
+import concurrent.futures
+
 logger = logging.getLogger("session_manager")
+
+class ThumbnailCache:
+    """In-memory LRU cache for WebP thumbnails to eliminate network SMB roundtrips."""
+    def __init__(self, max_items: int = 1200):
+        self._cache: collections.OrderedDict[str, bytes] = collections.OrderedDict()
+        self._max = max_items
+        self._lock = threading.Lock()
+
+    def get(self, key: str) -> Optional[bytes]:
+        with self._lock:
+            if key in self._cache:
+                self._cache.move_to_end(key)
+                return self._cache[key]
+            return None
+
+    def put(self, key: str, data: bytes):
+        with self._lock:
+            self._cache[key] = data
+            self._cache.move_to_end(key)
+            if len(self._cache) > self._max:
+                self._cache.popitem(last=False)
+
+    def invalidate_session(self, session_id: str):
+        prefix = f"{session_id}/"
+        with self._lock:
+            keys_to_del = [k for k in self._cache if k.startswith(prefix)]
+            for k in keys_to_del:
+                del self._cache[k]
 
 class PageItem(BaseModel):
     id: str
@@ -58,6 +89,11 @@ class SessionManager:
         self._stats_cache: Optional[Dict[str, Any]] = None
         self._stats_cache_time: float = 0.0
         self._stats_lock = threading.Lock()
+        self.thumbnail_cache = ThumbnailCache()
+        self.extraction_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=2,
+            thread_name_prefix="ExtractionWorker"
+        )
 
     @property
     def staging_dir(self) -> Path:
@@ -576,13 +612,13 @@ class SessionManager:
                     "error": err_msg
                 }
 
-        thread = threading.Thread(target=worker, daemon=True)
-        thread.start()
+        self.extraction_executor.submit(worker)
 
         return session_id
 
     def delete_session(self, session_id: str):
         """Cleans up staging directory on cancel or error."""
+        self.thumbnail_cache.invalidate_session(session_id)
         sdir = self.get_session_dir(session_id)
         if sdir.exists():
             mpath = sdir / "manifest.json"

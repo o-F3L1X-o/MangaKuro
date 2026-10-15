@@ -1,12 +1,23 @@
 import io
 import os
 from pathlib import Path
-from typing import Tuple, List, Optional, Dict, Any
+from typing import Tuple, List, Optional, Dict, Any, Union
 from PIL import Image, ImageOps, ImageDraw, ImageFont
 
-def create_thumbnail(src_path: Path, dest_path: Path, max_size: Tuple[int, int] = (360, 480)) -> Tuple[int, int]:
-    """Generates a fast, lightweight WebP thumbnail from an image file with ultra-low CPU/RAM footprint."""
-    with Image.open(src_path) as img:
+def create_thumbnail(
+    src_data: Union[Path, str, bytes, io.BytesIO], 
+    dest_path: Path, 
+    max_size: Tuple[int, int] = (360, 480)
+) -> Tuple[int, int]:
+    """Generates a fast, lightweight WebP thumbnail from an image file or in-memory bytes with ultra-low CPU/RAM footprint."""
+    if isinstance(src_data, (bytes, bytearray)):
+        src = io.BytesIO(src_data)
+    elif isinstance(src_data, str):
+        src = Path(src_data)
+    else:
+        src = src_data
+
+    with Image.open(src) as img:
         img = ImageOps.exif_transpose(img)
         orig_w, orig_h = img.size
         # Fast JPEG/MPO draft decode: skips full-res raster allocation (saves 80% RAM & CPU)

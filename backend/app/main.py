@@ -617,20 +617,39 @@ async def get_session(session_id: str):
 
 @app.get("/api/session/{session_id}/thumb/{filename}")
 async def get_thumbnail(session_id: str, filename: str):
-    """Serves high-performance WebP thumbnail with instant cache validation."""
+    """Serves high-performance WebP thumbnail from in-memory cache or storage with immutable browser caching."""
+    cache_key = f"{session_id}/{filename}"
+    cached_bytes = session_manager.thumbnail_cache.get(cache_key)
+    if cached_bytes:
+        return Response(
+            content=cached_bytes,
+            media_type="image/webp",
+            headers={
+                "Cache-Control": "public, max-age=604800, immutable",
+                "X-MangaKuro-Cache": "HIT"
+            }
+        )
+
     sdir = session_manager.get_session_dir(session_id)
     path = sdir / "thumbnails" / filename
     if not path.exists():
         raise HTTPException(status_code=404, detail="Miniatura no encontrada")
-    return FileResponse(
-        path,
+
+    data = await asyncio.to_thread(path.read_bytes)
+    session_manager.thumbnail_cache.put(cache_key, data)
+
+    return Response(
+        content=data,
         media_type="image/webp",
-        headers={"Cache-Control": "no-cache, must-revalidate"}
+        headers={
+            "Cache-Control": "public, max-age=604800, immutable",
+            "X-MangaKuro-Cache": "MISS"
+        }
     )
 
 @app.get("/api/session/{session_id}/image/{filename}")
 async def get_full_image(session_id: str, filename: str):
-    """Serves full resolution page image with instant cache validation."""
+    """Serves full resolution page image with fast cache validation."""
     sdir = session_manager.get_session_dir(session_id)
     path = sdir / "images" / filename
     if not path.exists():
@@ -647,7 +666,7 @@ async def get_full_image(session_id: str, filename: str):
     return FileResponse(
         path, 
         media_type=media_map.get(suffix, "image/jpeg"),
-        headers={"Cache-Control": "no-cache, must-revalidate"}
+        headers={"Cache-Control": "public, max-age=604800, immutable"}
     )
 
 # --- Page Actions (Instant Hot-Saving) ---

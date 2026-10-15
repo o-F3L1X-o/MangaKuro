@@ -92,12 +92,13 @@ def extract_cbz_or_zip(
                     saved_name = f"page_{idx+1:04d}_{page_id[:8]}{suffix}"
                     saved_path = images_dir / saved_name
 
-                    with z.open(entry) as source, open(saved_path, "wb") as dest:
-                        shutil.copyfileobj(source, dest)
+                    img_bytes = z.read(entry)
+                    with open(saved_path, "wb") as dest:
+                        dest.write(img_bytes)
 
                     thumb_name = f"thumb_{idx+1:04d}_{page_id[:8]}.webp"
                     thumb_path = thumbs_dir / thumb_name
-                    w, h = create_thumbnail(saved_path, thumb_path)
+                    w, h = create_thumbnail(img_bytes, thumb_path)
 
                     result.pages.append({
                         "id": page_id,
@@ -382,12 +383,13 @@ def extract_epub(
                 saved_name = f"page_{idx+1:04d}_{page_id[:8]}{suffix}"
                 saved_path = images_dir / saved_name
 
-                with zf.open(entry) as source, open(saved_path, "wb") as dest:
-                    shutil.copyfileobj(source, dest)
+                img_bytes = zf.read(entry)
+                with open(saved_path, "wb") as dest:
+                    dest.write(img_bytes)
 
                 thumb_name = f"thumb_{idx+1:04d}_{page_id[:8]}.webp"
                 thumb_path = thumbs_dir / thumb_name
-                w, h = create_thumbnail(saved_path, thumb_path)
+                w, h = create_thumbnail(img_bytes, thumb_path)
 
                 result.pages.append({
                     "id": page_id,
@@ -461,11 +463,11 @@ def process_extracted_folder(
             saved_name = f"page_{idx+1:04d}_{page_id[:8]}{suffix}"
             saved_path = images_dir / saved_name
 
-            shutil.copy2(img_path, saved_path)
-
             thumb_name = f"thumb_{idx+1:04d}_{page_id[:8]}.webp"
             thumb_path = thumbs_dir / thumb_name
-            w, h = create_thumbnail(saved_path, thumb_path)
+            w, h = create_thumbnail(img_path, thumb_path)
+
+            shutil.copy2(img_path, saved_path)
 
             result.pages.append({
                 "id": page_id,
