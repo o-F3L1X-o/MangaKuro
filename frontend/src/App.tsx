@@ -197,6 +197,7 @@ export const App: React.FC = () => {
   const [isDonationOpen, setIsDonationOpen] = useState(false);
   const [isImageAnalysisOpen, setIsImageAnalysisOpen] = useState(false);
   const [isOnlineSearchOpen, setIsOnlineSearchOpen] = useState(false);
+  const [onlineSearchDefaultQuery, setOnlineSearchDefaultQuery] = useState<string>('');
   const [stagingTab, setStagingTab] = useState<'all' | 'tomos' | 'chapters'>('all');
   const [dashboardSearch, setDashboardSearch] = useState('');
   const [uploadDefaultSeries, setUploadDefaultSeries] = useState<string | null>(null);
@@ -1123,7 +1124,10 @@ export const App: React.FC = () => {
         onToggleMonitor={toggleMonitor}
         onOpenDonation={() => setIsDonationOpen(true)}
         onOpenImageAnalysis={() => setIsImageAnalysisOpen(true)}
-        onOpenOnlineSearch={() => setIsOnlineSearchOpen(true)}
+        onOpenOnlineSearch={() => {
+          setOnlineSearchDefaultQuery('');
+          setIsOnlineSearchOpen(true);
+        }}
       />
 
       {/* Main Content Area with Sidebar */}
@@ -1180,6 +1184,10 @@ export const App: React.FC = () => {
           onOpenExportGroup={(group) => setExportGroupTarget(group)}
           onOpenDeleteGroup={(group) => setDeleteGroupTarget(group)}
           onOpenDeleteMarked={(marked) => setDeleteMarkedSessions(marked)}
+          onOpenOnlineSearch={(seriesName) => {
+            setOnlineSearchDefaultQuery(seriesName || '');
+            setIsOnlineSearchOpen(true);
+          }}
         />
 
         <main
@@ -1880,6 +1888,7 @@ export const App: React.FC = () => {
         isOpen={isOnlineSearchOpen}
         onClose={() => setIsOnlineSearchOpen(false)}
         session={session}
+        defaultQuery={onlineSearchDefaultQuery}
         onUpdateMetadata={handleSaveMetadata}
         onCoverApplied={handleOnlineCoverApplied}
       />

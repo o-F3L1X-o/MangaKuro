@@ -171,7 +171,7 @@ export interface AuthStatusResult {
 
 export interface OnlineSearchResult {
   id: string;
-  provider: 'mangadex' | 'anilist' | 'openlibrary';
+  provider: 'mangadex' | 'anilist' | 'mangaupdates' | 'openlibrary';
   provider_label: string;
   title: string;
   title_spanish?: string;
@@ -197,5 +197,19 @@ export interface VolumeCoverItem {
   cover_url: string;
   cover_url_full?: string;
   description?: string;
+}
+
+export interface SeriesOnlineSummary {
+  series_name: string;
+  search_query: string;
+  official_title: string;
+  total_volumes: number | null;
+  total_chapters: number | null;
+  status: 'RELEASING' | 'FINISHED' | 'HIATUS' | 'CANCELLED' | 'UNKNOWN' | string;
+  status_es: string;
+  cover_url: string | null;
+  mangadex_id: string | null;
+  has_volume_covers: boolean;
+  source: string;
 }
 

@@ -1915,13 +1915,29 @@ class SessionManager:
         thumbs_dir.mkdir(parents=True, exist_ok=True)
 
         import io
+        import base64
         import urllib.request
-        req = urllib.request.Request(
-            image_url,
-            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) MangaKuro/1.0"}
-        )
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            data = resp.read()
+        import urllib.parse
+
+        if image_url.startswith("data:"):
+            comma_idx = image_url.find(",")
+            if comma_idx != -1:
+                data = base64.b64decode(image_url[comma_idx+1:])
+            else:
+                raise ValueError("Formato de imagen en base64 inválido")
+        else:
+            parsed = urllib.parse.urlparse(image_url)
+            referer = f"{parsed.scheme}://{parsed.netloc}/" if parsed.netloc else ""
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+                "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
+            }
+            if referer:
+                headers["Referer"] = referer
+            req = urllib.request.Request(image_url, headers=headers)
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = resp.read()
 
         pil_img = Image.open(io.BytesIO(data))
         if pil_img.mode in ("RGBA", "LA", "P"):

@@ -48,10 +48,11 @@ import {
   Search,
   FolderInput,
   FolderPlus,
-  PlusCircle
+  PlusCircle,
+  Globe
 } from 'lucide-react';
-import { ComicSessionSummary } from '../types';
-import { getThumbUrl } from '../api';
+import { ComicSessionSummary, SeriesOnlineSummary } from '../types';
+import { getThumbUrl, fetchSeriesOnlineSummary } from '../api';
 import { 
   groupSessionsBySeries, 
   extractSortNumber, 
@@ -85,6 +86,7 @@ interface SidebarProps {
   onOpenExportGroup?: (group: SeriesGroup) => void;
   onOpenDeleteGroup?: (group: SeriesGroup) => void;
   onOpenDeleteMarked?: (sessions: ComicSessionSummary[]) => void;
+  onOpenOnlineSearch?: (seriesName?: string) => void;
 }
 
 interface SortableSessionItemProps {
@@ -460,6 +462,8 @@ interface DroppableSeriesGroupProps {
   onOpenAppendChapters?: (targetTomo?: ComicSessionSummary, initialChapterIds?: string[]) => void;
   onOpenExportGroup?: (group: SeriesGroup) => void;
   onOpenDeleteGroup?: (group: SeriesGroup) => void;
+  onlineSummary?: SeriesOnlineSummary;
+  onOpenOnlineSearch?: (seriesName?: string) => void;
 }
 
 const DroppableSeriesGroup: React.FC<DroppableSeriesGroupProps> = ({
@@ -473,6 +477,7 @@ const DroppableSeriesGroup: React.FC<DroppableSeriesGroupProps> = ({
   activeDragSourceGroupKey,
   activeDragId,
   isDraggingAnyItem,
+  onlineSummary,
   onToggleExpandChevron,
   onSelectGroup,
   onSelectSession,
@@ -491,7 +496,8 @@ const DroppableSeriesGroup: React.FC<DroppableSeriesGroupProps> = ({
   onToggleItemType,
   onOpenAppendChapters,
   onOpenExportGroup,
-  onOpenDeleteGroup
+  onOpenDeleteGroup,
+  onOpenOnlineSearch
 }) => {
   const { t } = useTranslation();
   const selectedChapterIds = useMemo(() => {
@@ -590,18 +596,40 @@ const DroppableSeriesGroup: React.FC<DroppableSeriesGroupProps> = ({
           </button>
         </div>
 
-        {/* Center: Title & badges centered as a distinct collection/group header (NO tomo thumbnail) */}
-        <div className="min-w-0 flex-1 flex flex-col items-center justify-center text-center px-1">
-          <div className="flex items-center justify-center gap-1.5 flex-wrap max-w-full">
+        {/* Center: Title & badges formatted with online publication status and volume counts */}
+        <div className="min-w-0 flex-1 flex flex-col items-start justify-center text-left px-1.5 overflow-hidden">
+          <div className="flex items-center gap-1.5 flex-wrap w-full">
             <span className="text-[9px] font-mono font-bold uppercase tracking-wider text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/80 border border-indigo-200 dark:border-indigo-700/60 px-1.5 py-0.2 rounded shrink-0">
               {t('sidebar.groupTag')}
             </span>
             <h3
-              className="text-xs font-semibold text-slate-800 dark:text-slate-100 tracking-normal truncate max-w-[140px] sm:max-w-[180px] group-hover/hdr:text-indigo-600 dark:group-hover/hdr:text-indigo-300 transition"
-              title={group.name}
+              className="text-xs sm:text-sm font-bold text-slate-800 dark:text-slate-100 tracking-tight truncate max-w-[220px] sm:max-w-[340px] group-hover/hdr:text-indigo-600 dark:group-hover/hdr:text-indigo-300 transition"
+              title={onlineSummary?.official_title && onlineSummary.official_title !== group.name ? `${group.name} (${onlineSummary.official_title})` : group.name}
             >
               {group.name}
             </h3>
+
+            {/* Official Online Status Badge (En emisión, Finalizado, etc.) */}
+            {onlineSummary && onlineSummary.status !== 'UNKNOWN' && (
+              <span
+                className={`px-1.5 py-0.2 rounded-full text-[9px] font-bold flex items-center gap-1 shrink-0 shadow-2xs ${
+                  onlineSummary.status === 'RELEASING'
+                    ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30'
+                    : onlineSummary.status === 'FINISHED'
+                    ? 'bg-blue-500/15 text-blue-700 dark:text-blue-300 border border-blue-500/30'
+                    : onlineSummary.status === 'HIATUS'
+                    ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30'
+                    : 'bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-500/30'
+                }`}
+                title={`Estado oficial (${onlineSummary.source}): ${onlineSummary.status_es}`}
+              >
+                {onlineSummary.status === 'RELEASING' && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_6px_rgba(52,211,153,0.9)] animate-pulse" />
+                )}
+                <span>{onlineSummary.status_es}</span>
+              </span>
+            )}
+
             {isGroupActive && (
               <span className="px-1.5 py-0.2 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 text-[9px] font-bold flex items-center gap-1 shadow-2xs shrink-0">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_6px_rgba(52,211,153,0.9)]" />
@@ -610,24 +638,67 @@ const DroppableSeriesGroup: React.FC<DroppableSeriesGroupProps> = ({
             )}
           </div>
 
-          <div className="flex items-center justify-center gap-1 mt-0.5 text-[10px] text-slate-500 dark:text-slate-400 flex-wrap">
-            {group.totalTomos > 0 && (
-              <span className="text-amber-600 dark:text-amber-400 font-semibold">{group.totalTomos} {t('common.tomo')}{group.totalTomos > 1 ? 's' : ''}</span>
-            )}
-            {group.totalTomos > 0 && group.totalChapters > 0 && <span>•</span>}
-            {group.totalChapters > 0 && (
-              <span className="text-purple-600 dark:text-purple-300 font-semibold">{group.totalChapters} {t('common.chapter')}{group.totalChapters > 1 ? 's' : ''}</span>
-            )}
-            {group.totalTomos === 0 && group.totalChapters === 0 && (
+          <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-slate-500 dark:text-slate-400 flex-wrap">
+            {/* Tomos Counter with online total comparison */}
+            {onlineSummary?.total_volumes ? (
+              <span 
+                className="text-amber-600 dark:text-amber-400 font-bold bg-amber-500/10 dark:bg-amber-500/20 px-1.5 py-0.2 rounded border border-amber-500/30"
+                title={`${group.totalTomos} tomos en tu biblioteca de ${onlineSummary.total_volumes} tomos oficiales (${onlineSummary.source})`}
+              >
+                📦 {group.totalTomos} / {onlineSummary.total_volumes} {t('common.tomo')}s
+              </span>
+            ) : group.totalTomos > 0 ? (
+              <span className="text-amber-600 dark:text-amber-400 font-semibold">
+                {group.totalTomos} {t('common.tomo')}{group.totalTomos > 1 ? 's' : ''}
+              </span>
+            ) : null}
+
+            {/* Chapters Counter with online total comparison */}
+            {onlineSummary?.total_chapters ? (
+              <span 
+                className="text-purple-600 dark:text-purple-300 font-bold bg-purple-500/10 dark:bg-purple-500/20 px-1.5 py-0.2 rounded border border-purple-500/30"
+                title={`${group.totalChapters} capítulos en tu biblioteca de ${onlineSummary.total_chapters} capítulos disponibles (${onlineSummary.source})`}
+              >
+                📑 {group.totalChapters} / {onlineSummary.total_chapters} Caps
+              </span>
+            ) : group.totalChapters > 0 ? (
+              <span className="text-purple-600 dark:text-purple-300 font-semibold">
+                {group.totalChapters} {t('common.chapter')}{group.totalChapters > 1 ? 's' : ''}
+              </span>
+            ) : null}
+
+            {group.totalTomos === 0 && group.totalChapters === 0 && !onlineSummary?.total_volumes && (
               <span className="text-slate-500 font-semibold">{group.sessions.length} {t('sidebar.elements')}</span>
             )}
+
             <span>•</span>
             <span className="text-slate-500">{group.totalPages} {t('common.pages')}</span>
+
+            {/* Online Source Indicator */}
+            {onlineSummary?.source && onlineSummary.source !== 'None' && (
+              <span className="text-[9px] text-slate-400 dark:text-slate-500 font-mono">
+                ({onlineSummary.source})
+              </span>
+            )}
           </div>
         </div>
 
         {/* Right: Group Quick Actions with refined microinteractions & accessible tooltips */}
         <div className="flex items-center gap-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
+          {/* Quick Online Search for this series group */}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenOnlineSearch?.(group.name);
+            }}
+            className="p-1 rounded-md text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-500/20 transition-colors"
+            title={`Buscar portadas oficiales e información online de "${group.name}"`}
+            aria-label={`Buscar portadas oficiales e información online de "${group.name}"`}
+          >
+            <Globe className="w-3.5 h-3.5 text-indigo-400" />
+          </button>
+
           {/* Export all tomos in this group */}
           <button
             type="button"
@@ -851,7 +922,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenAppendChapters,
   onOpenExportGroup,
   onOpenDeleteGroup,
-  onOpenDeleteMarked
+  onOpenDeleteMarked,
+  onOpenOnlineSearch
 }) => {
   const { t } = useTranslation();
   // Resizable Sidebar width state (bounded between MIN_SIDEBAR_WIDTH and 50% screen width)
@@ -956,6 +1028,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   // Group all sessions by comic/manga series
   const seriesGroups = useMemo(() => groupSessionsBySeries(sessions), [sessions]);
+
+  // Online publication summaries cache & background prefetcher
+  const [onlineSummaries, setOnlineSummaries] = useState<Record<string, SeriesOnlineSummary>>({});
+  const [loadingSummaries, setLoadingSummaries] = useState<Record<string, boolean>>({});
+
+  const fetchSummaryForGroup = useCallback(async (seriesName: string) => {
+    const key = seriesName.trim().toLowerCase();
+    if (!key || onlineSummaries[key] || loadingSummaries[key]) return;
+    setLoadingSummaries((prev) => ({ ...prev, [key]: true }));
+    try {
+      const summary = await fetchSeriesOnlineSummary(seriesName);
+      setOnlineSummaries((prev) => ({ ...prev, [key]: summary }));
+    } catch (err) {
+      // Silently ignore network failures
+    } finally {
+      setLoadingSummaries((prev) => ({ ...prev, [key]: false }));
+    }
+  }, [onlineSummaries, loadingSummaries]);
+
+  useEffect(() => {
+    seriesGroups.forEach((g) => {
+      if (g.name && g.name.trim()) {
+        fetchSummaryForGroup(g.name);
+      }
+    });
+  }, [seriesGroups, fetchSummaryForGroup]);
 
   const activeDragItem = useMemo(() => {
     if (!activeDragId) return null;
@@ -1607,6 +1705,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   onOpenAppendChapters={onOpenAppendChapters}
                   onOpenExportGroup={onOpenExportGroup}
                   onOpenDeleteGroup={onOpenDeleteGroup}
+                  onlineSummary={onlineSummaries[group.name.trim().toLowerCase()]}
+                  onOpenOnlineSearch={onOpenOnlineSearch}
                 />
               );
             })}

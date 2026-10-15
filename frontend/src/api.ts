@@ -1,7 +1,8 @@
 import {
   SessionManifest, ComicInfo, AppSettings, ExportResult,
   ComicSessionSummary, SystemStats, ServerFsBrowseResult,
-  ServerImportRequest, AuthStatusResult, OnlineSearchResult, VolumeCoverItem
+  ServerImportRequest, AuthStatusResult, OnlineSearchResult, VolumeCoverItem,
+  SeriesOnlineSummary
 } from './types';
 
 const API_BASE = '/api';
@@ -911,6 +912,14 @@ export async function applyOnlineCover(
   }
   return res.json();
 }
+
+export async function fetchSeriesOnlineSummary(seriesName: string): Promise<SeriesOnlineSummary> {
+  const params = new URLSearchParams({ series_name: seriesName });
+  const res = await fetch(`${API_BASE}/series/online-summary?${params.toString()}`);
+  if (!res.ok) throw new Error('Error al consultar resumen online de la serie');
+  return res.json();
+}
+
 
 
 

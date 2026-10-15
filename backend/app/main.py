@@ -41,7 +41,7 @@ from app.services.session_manager import session_manager
 app = FastAPI(
     title="MangaKuro • ULTIMATE COMIC & MANGA SUITE",
     description="Gestor web ultra-rápido de CBZ, CBR, PDF y EPUB para Manga, Cómics y Webtoons listo para Komga.",
-    version="1.0.2"
+    version="1.0.3"
 )
 
 # Enable CORS for local network and dev mode
@@ -878,13 +878,24 @@ async def batch_update_metadata_endpoint(req: BatchMetadataRequest):
 
 @app.get("/api/search/online")
 async def search_online_endpoint(query: str, source: str = "auto"):
-    """Searches online databases (MangaDex, AniList, OpenLibrary) for volume/chapter counts, covers, and metadata."""
+    """Searches online databases (MangaUpdates, MangaDex, AniList, OpenLibrary) for volume/chapter counts, covers, and metadata."""
     from app.services.online_search import unified_online_search
     try:
         results = await asyncio.to_thread(unified_online_search, query=query, source=source)
         return {"results": results, "count": len(results)}
     except Exception as e:
         logger.error(f"Error in online search: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/series/online-summary")
+async def get_series_online_summary_endpoint(series_name: str):
+    """Fetches official online publication summary (status, total volumes, total chapters, cover) for a series."""
+    from app.services.online_search import get_series_online_summary
+    try:
+        summary = await asyncio.to_thread(get_series_online_summary, series_name)
+        return summary
+    except Exception as e:
+        logger.error(f"Error fetching online summary for '{series_name}': {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/search/mangadex/{manga_id}/covers")

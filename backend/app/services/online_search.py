@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+import threading
 import urllib.parse
 import urllib.request
 from typing import List, Dict, Any, Optional
@@ -77,6 +78,8 @@ def search_mangadex(query: str, limit: int = 8) -> List[Dict[str, Any]]:
         url = (
             f"https://api.mangadex.org/manga?title={urllib.parse.quote(query)}"
             f"&limit={limit}&includes[]=cover_art&includes[]=author&includes[]=artist"
+            f"&excludedTags[]=b13b2a48-c720-44a9-9c77-39c9979373fb"
+            f"&order[followedCount]=desc"
         )
         req = urllib.request.Request(url, headers=HEADERS)
         with urllib.request.urlopen(req, timeout=8) as resp:
@@ -216,7 +219,7 @@ def search_anilist(query: str, limit: int = 6) -> List[Dict[str, Any]]:
     gql_query = """
     query ($search: String, $limit: Int) {
       Page(page: 1, perPage: $limit) {
-        media(search: $search, type: MANGA) {
+        media(search: $search, type: MANGA, sort: [SEARCH_MATCH, POPULARITY_DESC]) {
           id
           title {
             romaji
@@ -370,6 +373,253 @@ def search_openlibrary(query: str, limit: int = 5) -> List[Dict[str, Any]]:
 
     return results
 
+def search_mangaupdates(query: str, limit: int = 6) -> List[Dict[str, Any]]:
+    """
+    Searches MangaUpdates API for manga metadata, accurate ongoing volume counts,
+    and official covers.
+    """
+    results = []
+    try:
+        url = "https://api.mangaupdates.com/v1/series/search"
+        body = json.dumps({"search": query, "stype": "title", "perpage": limit * 2}).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=body,
+            headers={**HEADERS, "Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            hits = data.get("results", [])
+
+        # Filter out Doujinshis
+        filtered_hits = [h for h in hits if h.get("record", {}).get("type") != "Doujinshi"]
+        if not filtered_hits:
+            filtered_hits = hits
+
+        for h in filtered_hits[:limit]:
+            rec = h.get("record", {})
+            sid = rec.get("series_id")
+            title = rec.get("title", "")
+            img_data = rec.get("image", {}) or {}
+            cover_url = (img_data.get("url") or {}).get("original")
+
+            status_es = "Desconocido"
+            status_code = "UNKNOWN"
+            vols = None
+            latest_ch = rec.get("latest_chapter")
+            desc = rec.get("description", "")
+            authors = []
+
+            try:
+                det_req = urllib.request.Request(
+                    f"https://api.mangaupdates.com/v1/series/{sid}",
+                    headers=HEADERS
+                )
+                with urllib.request.urlopen(det_req, timeout=4) as det_resp:
+                    det = json.loads(det_resp.read().decode("utf-8"))
+                    raw_status = det.get("status") or ""
+                    vol_m = re.search(r"(\d+)\s+Volume", raw_status, re.IGNORECASE)
+                    if vol_m:
+                        vols = int(vol_m.group(1))
+
+                    if "complete" in raw_status.lower():
+                        status_es = "Finalizado"
+                        status_code = "FINISHED"
+                    elif "ongoing" in raw_status.lower():
+                        status_es = "En emisión"
+                        status_code = "RELEASING"
+                    elif "hiatus" in raw_status.lower():
+                        status_es = "En pausa"
+                        status_code = "HIATUS"
+                    elif "cancel" in raw_status.lower():
+                        status_es = "Cancelado"
+                        status_code = "CANCELLED"
+
+                    if det.get("latest_chapter"):
+                        latest_ch = det.get("latest_chapter")
+                    if det.get("description"):
+                        desc = det.get("description")
+                    authors = [a.get("name") for a in det.get("authors", []) if a.get("name")]
+            except Exception:
+                pass
+
+            if desc:
+                desc = re.sub(r"<.*?>", "", desc)
+                desc = re.sub(r"\[.*?\]\(.*?\)", "", desc).strip()
+
+            genres = [translate_genre(g.get("genre")) for g in rec.get("genres", []) if g.get("genre")]
+
+            results.append({
+                "id": str(sid),
+                "provider": "mangaupdates",
+                "provider_label": "MangaUpdates (BBDD Global)",
+                "title": title,
+                "title_spanish": None,
+                "title_english": title,
+                "title_romaji": title,
+                "synonyms": [],
+                "synopsis_es": desc or "",
+                "synopsis_has_es": False,
+                "volumes": vols,
+                "chapters": latest_ch,
+                "status": status_code,
+                "status_es": status_es,
+                "year": rec.get("year"),
+                "genres": genres[:8],
+                "authors": authors[:3],
+                "cover_url": cover_url,
+                "has_volume_covers": False
+            })
+    except Exception as e:
+        logger.warning(f"Error fetching from MangaUpdates: {e}")
+
+    return results
+
+def clean_series_name(name: str) -> str:
+    """Removes volume, chapter, edition, bracket tags, and number suffixes from series titles."""
+    if not name:
+        return ""
+    s = re.sub(r"\[.*?\]|\(.*?\)|<.*?>", " ", name)
+    s = re.sub(r"(?i)\s*(?:[-_–—:]\s*)?(?:vol(?:ume)?|tomo|cap(?:[ií]tulo)?|ch(?:apter)?|[cv]|\#)\s*\.?\s*\d+.*$", "", s)
+    s = re.sub(r"\s+[-_–—]?\s*\d+(?:\.\d+)?\s*$", "", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s or name.strip()
+
+_ONLINE_SUMMARY_CACHE: Dict[str, Dict[str, Any]] = {}
+_SUMMARY_CACHE_LOCK = threading.Lock()
+
+def get_series_online_summary(series_name: str) -> Dict[str, Any]:
+    """
+    Fetches the definitive online publication status, total official volumes,
+    and latest chapter count across MangaUpdates, AniList, and MangaDex.
+    Results are thread-safe cached in memory.
+    """
+    cleaned = clean_series_name(series_name)
+    cache_key = cleaned.lower()
+
+    with _SUMMARY_CACHE_LOCK:
+        if cache_key in _ONLINE_SUMMARY_CACHE:
+            return _ONLINE_SUMMARY_CACHE[cache_key]
+
+    summary: Dict[str, Any] = {
+        "series_name": series_name,
+        "search_query": cleaned,
+        "official_title": cleaned,
+        "total_volumes": None,
+        "total_chapters": None,
+        "status": "UNKNOWN",
+        "status_es": "Desconocido",
+        "cover_url": None,
+        "mangadex_id": None,
+        "has_volume_covers": False,
+        "source": "None"
+    }
+
+    # 1. Primary Source: MangaUpdates (best for accurate ongoing & completed volume counts)
+    try:
+        mu_url = "https://api.mangaupdates.com/v1/series/search"
+        body = json.dumps({"search": cleaned, "stype": "title", "perpage": 5}).encode("utf-8")
+        req = urllib.request.Request(
+            mu_url,
+            data=body,
+            headers={**HEADERS, "Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            hits = [r["record"] for r in data.get("results", []) if r.get("record", {}).get("type") != "Doujinshi"]
+
+        if hits:
+            top_rec = hits[0]
+            sid = top_rec.get("series_id")
+            det_req = urllib.request.Request(f"https://api.mangaupdates.com/v1/series/{sid}", headers=HEADERS)
+            with urllib.request.urlopen(det_req, timeout=5) as det_resp:
+                det = json.loads(det_resp.read().decode("utf-8"))
+
+            summary["official_title"] = det.get("title") or top_rec.get("title")
+            raw_status = det.get("status") or ""
+            vol_match = re.search(r"(\d+)\s+Volume", raw_status, re.IGNORECASE)
+            if vol_match:
+                summary["total_volumes"] = int(vol_match.group(1))
+
+            if "complete" in raw_status.lower():
+                summary["status"] = "FINISHED"
+                summary["status_es"] = "Finalizado"
+            elif "ongoing" in raw_status.lower():
+                summary["status"] = "RELEASING"
+                summary["status_es"] = "En emisión"
+            elif "hiatus" in raw_status.lower():
+                summary["status"] = "HIATUS"
+                summary["status_es"] = "En pausa"
+            elif "cancel" in raw_status.lower():
+                summary["status"] = "CANCELLED"
+                summary["status_es"] = "Cancelado"
+
+            if det.get("latest_chapter"):
+                summary["total_chapters"] = det.get("latest_chapter")
+
+            img_data = det.get("image") or top_rec.get("image") or {}
+            img_url = (img_data.get("url") or {}).get("original")
+            if img_url:
+                summary["cover_url"] = img_url
+
+            summary["source"] = "MangaUpdates"
+    except Exception as e:
+        logger.debug(f"MangaUpdates lookup error for '{cleaned}': {e}")
+
+    # 2. Secondary Source: AniList (if volumes/chapters/status still missing, or for higher-res cover)
+    if summary["total_volumes"] is None or summary["status"] == "UNKNOWN" or not summary["cover_url"]:
+        try:
+            anilist_hits = search_anilist(cleaned, limit=1)
+            if anilist_hits:
+                ani = anilist_hits[0]
+                if summary["total_volumes"] is None and ani.get("volumes"):
+                    summary["total_volumes"] = ani["volumes"]
+                if summary["total_chapters"] is None and ani.get("chapters"):
+                    summary["total_chapters"] = ani["chapters"]
+                if summary["status"] == "UNKNOWN" and ani.get("status"):
+                    summary["status"] = ani.get("status", "UNKNOWN")
+                    summary["status_es"] = ani.get("status_es", "Desconocido")
+                if not summary["cover_url"] and ani.get("cover_url"):
+                    summary["cover_url"] = ani["cover_url"]
+                if summary["source"] == "None":
+                    summary["source"] = "AniList"
+                    summary["official_title"] = ani.get("title")
+        except Exception as e:
+            logger.debug(f"AniList fallback error for '{cleaned}': {e}")
+
+    # 3. MangaDex check: obtain MangaDex ID for volume covers support and extra verification
+    try:
+        md_hits = search_mangadex(cleaned, limit=1)
+        if md_hits:
+            md = md_hits[0]
+            summary["mangadex_id"] = md.get("id")
+            summary["has_volume_covers"] = True
+            if summary["total_volumes"] is None and md.get("volumes"):
+                try:
+                    summary["total_volumes"] = int(md["volumes"])
+                except Exception:
+                    pass
+            if summary["total_chapters"] is None and md.get("chapters"):
+                try:
+                    summary["total_chapters"] = int(float(md["chapters"]))
+                except Exception:
+                    pass
+            if summary["status"] == "UNKNOWN" and md.get("status"):
+                summary["status"] = md.get("status", "UNKNOWN").upper()
+                summary["status_es"] = md.get("status_es", "Desconocido")
+            if not summary["cover_url"] and md.get("cover_url"):
+                summary["cover_url"] = md["cover_url"]
+            if summary["source"] == "None":
+                summary["source"] = "MangaDex"
+                summary["official_title"] = md.get("title")
+    except Exception as e:
+        logger.debug(f"MangaDex fallback error for '{cleaned}': {e}")
+
+    with _SUMMARY_CACHE_LOCK:
+        _ONLINE_SUMMARY_CACHE[cache_key] = summary
+
+    return summary
+
 def unified_online_search(query: str, source: str = "auto") -> List[Dict[str, Any]]:
     """
     Executes a multi-provider search with Spanish prioritization and bilingual matching.
@@ -379,6 +629,9 @@ def unified_online_search(query: str, source: str = "auto") -> List[Dict[str, An
         return []
 
     combined: List[Dict[str, Any]] = []
+
+    if source in ("auto", "mangaupdates"):
+        combined.extend(search_mangaupdates(clean_query, limit=5))
 
     if source in ("auto", "mangadex"):
         combined.extend(search_mangadex(clean_query, limit=6))
@@ -397,11 +650,13 @@ def unified_online_search(query: str, source: str = "auto") -> List[Dict[str, An
         if r.get("synopsis_has_es"):
             score += 3
         if r.get("volumes") is not None:
-            score += 2
+            score += 3
         if r.get("chapters") is not None:
-            score += 1
+            score += 2
         if r.get("cover_url"):
             score += 2
+        if r.get("provider") == "mangadex" and r.get("has_volume_covers"):
+            score += 1
         return score
 
     combined.sort(key=score_result, reverse=True)

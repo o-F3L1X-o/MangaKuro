@@ -26,6 +26,7 @@ interface OnlineSearchModalProps {
   isOpen: boolean;
   onClose: () => void;
   session: SessionManifest | null;
+  defaultQuery?: string;
   onUpdateMetadata: (metadata: ComicInfo) => Promise<any>;
   onCoverApplied?: (updatedManifest: SessionManifest) => void;
 }
@@ -34,13 +35,17 @@ export const OnlineSearchModal: React.FC<OnlineSearchModalProps> = ({
   isOpen,
   onClose,
   session,
+  defaultQuery,
   onUpdateMetadata,
   onCoverApplied
 }) => {
   const { t } = useTranslation();
 
-  // Extract initial query from session Series or original filename
+  // Extract initial query from defaultQuery, session Series, or original filename
   const getInitialQuery = useCallback(() => {
+    if (defaultQuery && defaultQuery.trim()) {
+      return defaultQuery.trim();
+    }
     if (!session) return '';
     if (session.metadata.Series && session.metadata.Series.trim()) {
       return session.metadata.Series.trim();
@@ -52,13 +57,17 @@ export const OnlineSearchModal: React.FC<OnlineSearchModalProps> = ({
       .replace(/[-_]/g, ' ')
       .replace(/\b(vol|v\d+|tomo|cap|ch\d+)\b.*$/i, '')
       .trim();
-  }, [session]);
+  }, [session, defaultQuery]);
 
   const [query, setQuery] = useState('');
-  const [sourceFilter, setSourceFilter] = useState<'auto' | 'mangadex' | 'anilist' | 'openlibrary'>('auto');
+  const [sourceFilter, setSourceFilter] = useState<'auto' | 'mangaupdates' | 'mangadex' | 'anilist' | 'openlibrary'>('auto');
   const [isLoading, setIsLoading] = useState(false);
   const [results, setResults] = useState<OnlineSearchResult[]>([]);
   const [error, setError] = useState<string | null>(null);
+
+  // Direct cover URL and clipboard paste state
+  const [directImageUrl, setDirectImageUrl] = useState('');
+  const [isPastingImage, setIsPastingImage] = useState(false);
 
   // Cover selection action state
   const [pendingCoverTarget, setPendingCoverTarget] = useState<{
@@ -76,11 +85,12 @@ export const OnlineSearchModal: React.FC<OnlineSearchModalProps> = ({
 
   // Auto-search on open if query exists
   useEffect(() => {
-    if (isOpen && session) {
+    if (isOpen) {
       const initQ = getInitialQuery();
       setQuery(initQ);
       setResults([]);
       setError(null);
+      setDirectImageUrl('');
       setPendingCoverTarget(null);
       setViewingVolumeCoversFor(null);
       if (initQ) {
@@ -111,10 +121,67 @@ export const OnlineSearchModal: React.FC<OnlineSearchModalProps> = ({
     performSearch(query, sourceFilter);
   };
 
-  const handleSourceTabChange = (newSource: 'auto' | 'mangadex' | 'anilist' | 'openlibrary') => {
+  const handleSourceTabChange = (newSource: 'auto' | 'mangaupdates' | 'mangadex' | 'anilist' | 'openlibrary') => {
     setSourceFilter(newSource);
     if (query.trim()) {
       performSearch(query, newSource);
+    }
+  };
+
+  // Direct Cover Application (URL or Base64 Clipboard)
+  const handleApplyDirectCover = (imageUrlToUse: string) => {
+    if (!imageUrlToUse.trim()) return;
+    const mockResult: OnlineSearchResult = {
+      id: 'custom_url',
+      provider: 'auto' as any,
+      provider_label: 'Portada Personalizada / URL Directa',
+      title: session?.metadata.Series || session?.original_filename || 'Portada Personalizada',
+      synonyms: [],
+      synopsis_es: '',
+      synopsis_has_es: false,
+      status: '',
+      status_es: '',
+      genres: [],
+      authors: [],
+      has_volume_covers: false,
+      cover_url: imageUrlToUse.trim()
+    };
+    setPendingCoverTarget({
+      result: mockResult,
+      coverUrl: imageUrlToUse.trim(),
+      applyMetaToo: false
+    });
+  };
+
+  const handlePasteFromClipboard = async () => {
+    try {
+      setIsPastingImage(true);
+      const clipboardItems = await navigator.clipboard.read();
+      for (const item of clipboardItems) {
+        const imageType = item.types.find(t => t.startsWith('image/'));
+        if (imageType) {
+          const blob = await item.getType(imageType);
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const base64data = reader.result as string;
+            handleApplyDirectCover(base64data);
+          };
+          reader.readAsDataURL(blob);
+          return;
+        }
+      }
+      // If no image blob found, check text
+      const text = await navigator.clipboard.readText();
+      if (text && (text.startsWith('http://') || text.startsWith('https://') || text.startsWith('data:image/'))) {
+        setDirectImageUrl(text.trim());
+        handleApplyDirectCover(text.trim());
+        return;
+      }
+      setError('No se encontró ninguna imagen ni enlace en el portapapeles. Copia una imagen o URL primero.');
+    } catch (err: any) {
+      setError('No se pudo acceder al portapapeles. Puedes pegar el enlace de la imagen manualmente en el campo.');
+    } finally {
+      setIsPastingImage(false);
     }
   };
 
@@ -293,11 +360,46 @@ export const OnlineSearchModal: React.FC<OnlineSearchModalProps> = ({
             </button>
           </form>
 
+          {/* Direct Cover URL or Clipboard Image Paste Bar */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 p-2 rounded-xl bg-comic-900/80 border border-comic-800">
+            <div className="text-[11px] font-semibold text-slate-300 flex items-center gap-1.5 shrink-0 pl-1">
+              <ExternalLink className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Pegar portada directa:</span>
+            </div>
+            <input
+              type="text"
+              value={directImageUrl}
+              onChange={(e) => setDirectImageUrl(e.target.value)}
+              placeholder="Pega enlace de imagen (Viz, Simon & Schuster, Manga-News, Google...)"
+              className="flex-1 px-3 py-1.5 rounded-lg bg-comic-950 border border-comic-700 text-white text-xs focus:border-indigo-500 focus:outline-none font-medium"
+            />
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                disabled={!directImageUrl.trim()}
+                onClick={() => handleApplyDirectCover(directImageUrl)}
+                className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-xs font-bold transition shadow-sm cursor-pointer"
+              >
+                Usar Portada
+              </button>
+              <button
+                type="button"
+                onClick={handlePasteFromClipboard}
+                disabled={isPastingImage}
+                title="Pegar imagen copiada directamente desde el portapapeles (Ctrl+V)"
+                className="px-2.5 py-1.5 rounded-lg bg-comic-800 hover:bg-comic-700 text-slate-200 border border-comic-700 text-xs font-semibold transition flex items-center gap-1 cursor-pointer"
+              >
+                {isPastingImage ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <span>📋 Pegar (Ctrl+V)</span>}
+              </button>
+            </div>
+          </div>
+
           {/* Provider Selection Tabs */}
           <div className="flex flex-wrap items-center gap-1.5 text-xs">
             <span className="text-[11px] font-semibold text-slate-400 mr-1">Fuente:</span>
             {[
               { id: 'auto', label: '⭐ Automático (Todas)' },
+              { id: 'mangaupdates', label: 'MangaUpdates (Tomos Oficiales)' },
               { id: 'mangadex', label: 'MangaDex (Scanlation / ES)' },
               { id: 'anilist', label: 'AniList (Tomos & Caps)' },
               { id: 'openlibrary', label: 'Cómics (OpenLibrary)' },
