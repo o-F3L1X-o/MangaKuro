@@ -278,6 +278,15 @@ const SortableSessionItemComponent: React.FC<SortableSessionItemProps> = ({
               Vol.{item.volume}
             </span>
           )}
+          {item.merged_source_files && item.merged_source_files.length > 0 && (
+            <span
+              className="px-1.5 py-0.2 rounded bg-purple-950/90 text-purple-300 border border-purple-700/60 font-mono text-[9px] flex items-center gap-0.5 shrink-0"
+              title={`${item.merged_source_files.length} capítulos compilados: ${item.merged_chapter_names?.join(', ') || ''}`}
+            >
+              <Layers className="w-2.5 h-2.5 text-purple-400" />
+              <span>{item.merged_source_files.length} caps</span>
+            </span>
+          )}
           {isActive && (
             <span
               className="px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold text-[9px] flex items-center gap-1 shrink-0 shadow-sm"

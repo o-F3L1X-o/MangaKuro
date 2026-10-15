@@ -59,6 +59,9 @@ export interface SessionManifest {
   pages: PageItem[];
   metadata: ComicInfo;
   item_type?: 'tomo' | 'capitulo';
+  source_file_path?: string;
+  merged_source_files?: string[];
+  merged_chapter_names?: string[];
 }
 
 export interface ComicSessionSummary {
@@ -71,6 +74,9 @@ export interface ComicSessionSummary {
   page_count: number;
   cover_thumb: string;
   item_type?: 'tomo' | 'capitulo';
+  source_file_path?: string;
+  merged_source_files?: string[];
+  merged_chapter_names?: string[];
   created_at: number;
   updated_at: number;
 }
@@ -96,6 +102,9 @@ export interface ExportResult {
   size_bytes: number;
   size_mb: number;
   download_url: string;
+  overwrote_source?: boolean;
+  deleted_chapters?: string[];
+  deleted_chapters_count?: number;
 }
 
 export interface SystemStats {

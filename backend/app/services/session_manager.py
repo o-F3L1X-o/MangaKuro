@@ -43,6 +43,9 @@ class SessionManifest(BaseModel):
     pages: List[PageItem]
     metadata: ComicInfoModel
     item_type: str = "tomo"  # "tomo" or "capitulo"
+    source_file_path: Optional[str] = None
+    merged_source_files: Optional[List[str]] = None
+    merged_chapter_names: Optional[List[str]] = None
 
 class SessionManager:
     def __init__(self, staging_dir: Optional[Path] = None):
@@ -148,6 +151,9 @@ class SessionManager:
                                 "page_count": len(manifest.pages),
                                 "cover_thumb": cover_page.thumb_filename,
                                 "item_type": getattr(manifest, "item_type", "tomo"),
+                                "source_file_path": getattr(manifest, "source_file_path", None),
+                                "merged_source_files": getattr(manifest, "merged_source_files", None),
+                                "merged_chapter_names": getattr(manifest, "merged_chapter_names", None),
                                 "created_at": manifest.created_at,
                                 "updated_at": manifest.updated_at
                             })
@@ -448,16 +454,26 @@ class SessionManager:
         filename: str,
         item_type: Optional[str] = None,
         custom_series: Optional[str] = None,
-        custom_number: Optional[str] = None
+        custom_number: Optional[str] = None,
+        source_file_path: Optional[str] = None,
+        is_server_file: bool = False
     ) -> str:
         """Starts asynchronous archive extraction in a worker thread and tracks real-time progress."""
         session_id = str(uuid.uuid4())
         session_dir = self.get_session_dir(session_id)
         session_dir.mkdir(parents=True, exist_ok=True)
 
-        # Move source file into session dir
-        source_copy = session_dir / f"source_{filename}"
-        shutil.copyfile(temp_file_path, source_copy)
+        if is_server_file:
+            source_to_extract = temp_file_path
+            saved_source_path = source_file_path or str(temp_file_path)
+            temp_to_cleanup = None
+        else:
+            # Move uploaded source file into session dir
+            source_copy = session_dir / f"source_{filename}"
+            shutil.copyfile(temp_file_path, source_copy)
+            source_to_extract = source_copy
+            saved_source_path = None
+            temp_to_cleanup = source_copy
 
         self.jobs[session_id] = {
             "status": "processing",
@@ -481,7 +497,7 @@ class SessionManager:
                         "error": None
                     }
 
-                extracted = extract_archive_auto(source_copy, session_dir, progress_callback=on_progress)
+                extracted = extract_archive_auto(source_to_extract, session_dir, progress_callback=on_progress)
 
                 # If no Series in metadata, infer from filename
                 inferred = infer_metadata_from_filename(filename)
@@ -528,9 +544,17 @@ class SessionManager:
                     updated_at=time.time(),
                     pages=pages,
                     metadata=extracted.metadata,
-                    item_type=final_item_type
+                    item_type=final_item_type,
+                    source_file_path=saved_source_path
                 )
                 self.save_session(manifest)
+
+                # Clean up temporary archive copy if it was uploaded to avoid double storage
+                if temp_to_cleanup and temp_to_cleanup.exists():
+                    try:
+                        temp_to_cleanup.unlink(missing_ok=True)
+                    except Exception:
+                        pass
 
                 self.jobs[session_id] = {
                     "status": "ready",
@@ -1859,6 +1883,8 @@ class SessionManager:
         combined_pages: List[PageItem] = []
         order_counter = 1
         first_metadata = None
+        collected_merged_files: List[str] = []
+        collected_chapter_names: List[str] = []
 
         for idx, sid in enumerate(source_session_ids):
             s_manifest = self.load_session(sid)
@@ -1866,6 +1892,16 @@ class SessionManager:
                 continue
             if first_metadata is None:
                 first_metadata = s_manifest.metadata.model_copy()
+
+            ch_name = s_manifest.metadata.Title or (f"Capítulo {s_manifest.metadata.Number}" if s_manifest.metadata.Number else s_manifest.original_filename)
+            if s_manifest.source_file_path and s_manifest.source_file_path not in collected_merged_files:
+                collected_merged_files.append(s_manifest.source_file_path)
+                collected_chapter_names.append(ch_name)
+            if s_manifest.merged_source_files:
+                for mf, mn in zip(s_manifest.merged_source_files, s_manifest.merged_chapter_names or []):
+                    if mf not in collected_merged_files:
+                        collected_merged_files.append(mf)
+                        collected_chapter_names.append(mn)
 
             s_dir = self.get_session_dir(sid)
 
@@ -1950,7 +1986,9 @@ class SessionManager:
             updated_at=time.time(),
             pages=combined_pages,
             metadata=meta,
-            item_type="tomo"
+            item_type="tomo",
+            merged_source_files=collected_merged_files if collected_merged_files else None,
+            merged_chapter_names=collected_chapter_names if collected_chapter_names else None
         )
         self.save_session(new_manifest)
 
@@ -1980,6 +2018,8 @@ class SessionManager:
 
         order_counter = len(target_manifest.pages) + 1
         series_name = target_manifest.metadata.Series or target_manifest.original_filename
+        target_merged_files = list(target_manifest.merged_source_files or [])
+        target_chapter_names = list(target_manifest.merged_chapter_names or [])
 
         for idx, sid in enumerate(source_session_ids):
             if sid == target_session_id:
@@ -1987,6 +2027,16 @@ class SessionManager:
             src_manifest = self.load_session(sid)
             if not src_manifest:
                 continue
+
+            ch_name = src_manifest.metadata.Title or (f"Capítulo {src_manifest.metadata.Number}" if src_manifest.metadata.Number else src_manifest.original_filename)
+            if src_manifest.source_file_path and src_manifest.source_file_path not in target_merged_files:
+                target_merged_files.append(src_manifest.source_file_path)
+                target_chapter_names.append(ch_name)
+            if src_manifest.merged_source_files:
+                for mf, mn in zip(src_manifest.merged_source_files, src_manifest.merged_chapter_names or []):
+                    if mf not in target_merged_files:
+                        target_merged_files.append(mf)
+                        target_chapter_names.append(mn)
 
             src_dir = self.get_session_dir(sid)
 
@@ -2057,6 +2107,8 @@ class SessionManager:
                 p.is_cover = True
 
         target_manifest.metadata.PageCount = len(target_manifest.pages)
+        target_manifest.merged_source_files = target_merged_files if target_merged_files else None
+        target_manifest.merged_chapter_names = target_chapter_names if target_chapter_names else None
         target_manifest.updated_at = time.time()
         self.save_session(target_manifest)
 

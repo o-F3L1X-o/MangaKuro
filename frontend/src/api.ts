@@ -545,6 +545,8 @@ export async function exportComic(
     custom_export_dir?: string;
     export_format?: 'cbz' | 'zip' | 'cbr' | 'pdf' | 'epub';
     auto_downscale_oversized?: boolean;
+    overwrite_source?: boolean;
+    delete_merged_source_chapters?: boolean;
   },
   onProgress?: (info: ExportProgressInfo) => void
 ): Promise<ExportResult> {

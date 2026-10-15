@@ -533,7 +533,9 @@ def start_background_export(
     compression_format: str = "original",
     quality: int = 85,
     custom_filename: Optional[str] = None,
-    auto_downscale_oversized: bool = True
+    auto_downscale_oversized: bool = True,
+    overwrite_source: bool = False,
+    delete_merged_source_chapters: bool = False
 ) -> None:
     """Launches export in a background thread and tracks real-time progress."""
     export_jobs[session_id] = {
@@ -571,12 +573,46 @@ def start_background_export(
                 progress_callback=on_progress
             )
 
+            manifest = session_manager.load_session(session_id)
+            overwrote_source_result = False
+            deleted_chapters_list: List[str] = []
+
+            # 1. In-place overwrite if requested and original source file is known
+            if overwrite_source and manifest and manifest.source_file_path:
+                src_path = Path(manifest.source_file_path)
+                try:
+                    if src_path.resolve() != final_path.resolve() and final_path.exists():
+                        shutil.copy2(final_path, src_path)
+                    overwrote_source_result = True
+                    logger.info(f"Sobrescrito archivo original en el servidor/NAS: {src_path}")
+                except Exception as ow_err:
+                    logger.error(f"Error al sobrescribir archivo original {src_path}: {ow_err}")
+
+            # 2. Delete compiled individual chapter archives from NAS if requested
+            if delete_merged_source_chapters and manifest and manifest.merged_source_files:
+                for ch_file in manifest.merged_source_files:
+                    try:
+                        ch_p = Path(ch_file)
+                        if ch_p.exists() and ch_p.is_file():
+                            if ch_p.resolve() != final_path.resolve():
+                                ch_p.unlink()
+                                deleted_chapters_list.append(ch_p.name)
+                                logger.info(f"Capítulo original eliminado tras exportar tomo: {ch_p}")
+                    except Exception as del_err:
+                        logger.warning(f"No se pudo eliminar el capítulo original {ch_file}: {del_err}")
+
+            success_msg = f"¡Cómic exportado con éxito en {export_format.upper()}!"
+            if deleted_chapters_list:
+                success_msg += f" (Se eliminaron {len(deleted_chapters_list)} capítulos sueltos del NAS)"
+            elif overwrote_source_result:
+                success_msg += " (Archivo original en el servidor actualizado)"
+
             export_jobs[session_id] = {
                 "status": "ready",
                 "percent": 100,
                 "current": export_jobs[session_id].get("total", 0),
                 "total": export_jobs[session_id].get("total", 0),
-                "message": f"¡Cómic exportado con éxito en {export_format.upper()}!",
+                "message": success_msg,
                 "error": None,
                 "result": {
                     "success": True,
@@ -584,7 +620,10 @@ def start_background_export(
                     "filepath": str(final_path),
                     "size_bytes": file_size,
                     "size_mb": round(file_size / (1024 * 1024), 2),
-                    "download_url": f"/api/download/{final_path.name}"
+                    "download_url": f"/api/download/{final_path.name}",
+                    "overwrote_source": overwrote_source_result,
+                    "deleted_chapters": deleted_chapters_list,
+                    "deleted_chapters_count": len(deleted_chapters_list)
                 }
             }
         except Exception as e:

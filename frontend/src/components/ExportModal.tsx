@@ -15,7 +15,11 @@ import {
   Package,
   AlertTriangle,
   Coffee,
-  Heart
+  Heart,
+  Trash2,
+  Layers,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
 import { SessionManifest, ExportResult, AppSettings } from '../types';
 import { exportComic, ExportProgressInfo } from '../api';
@@ -40,6 +44,8 @@ interface ExportModalProps {
       custom_export_dir?: string;
       export_format: ExportFormatType;
       auto_downscale_oversized?: boolean;
+      overwrite_source?: boolean;
+      delete_merged_source_chapters?: boolean;
     };
   }) => void;
 }
@@ -74,6 +80,9 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   const [quality, setQuality] = useState<number>(settings.default_quality || 80);
   const [customExportDir, setCustomExportDir] = useState(settings.export_directory || '');
   const [autoDownscaleOversized, setAutoDownscaleOversized] = useState<boolean>(true);
+  const [overwriteSource, setOverwriteSource] = useState(false);
+  const [deleteMergedChapters, setDeleteMergedChapters] = useState(false);
+  const [showChapterList, setShowChapterList] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [progressInfo, setProgressInfo] = useState<ExportProgressInfo>({
     percent: 0,
@@ -96,6 +105,9 @@ export const ExportModal: React.FC<ExportModalProps> = ({
       setExportResult(null);
       setError(null);
       setIsExporting(false);
+      setOverwriteSource(false);
+      setDeleteMergedChapters(false);
+      setShowChapterList(false);
       setProgressInfo({
         percent: 0,
         current: 0,
@@ -132,7 +144,9 @@ export const ExportModal: React.FC<ExportModalProps> = ({
           custom_filename: filename,
           custom_export_dir: customExportDir.trim() || undefined,
           export_format: exportFormat,
-          auto_downscale_oversized: autoDownscaleOversized
+          auto_downscale_oversized: autoDownscaleOversized,
+          overwrite_source: overwriteSource,
+          delete_merged_source_chapters: deleteMergedChapters
         }
       });
       onClose();
@@ -159,7 +173,9 @@ export const ExportModal: React.FC<ExportModalProps> = ({
           custom_filename: filename,
           custom_export_dir: customExportDir.trim() || undefined,
           export_format: exportFormat,
-          auto_downscale_oversized: autoDownscaleOversized
+          auto_downscale_oversized: autoDownscaleOversized,
+          overwrite_source: overwriteSource,
+          delete_merged_source_chapters: deleteMergedChapters
         },
         (info) => {
           setProgressInfo(info);
@@ -240,6 +256,18 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                 <p className="text-[11px] text-slate-400 mt-2">
                   {t('exportModal.savedIn')} <span className="text-emerald-300 font-mono">{exportResult.filepath}</span>
                 </p>
+                {exportResult.deleted_chapters_count !== undefined && exportResult.deleted_chapters_count > 0 && (
+                  <div className="mt-2.5 p-2 rounded-lg bg-rose-950/60 border border-rose-800/80 text-[11px] text-rose-300 flex items-center justify-center gap-1.5 font-semibold">
+                    <Trash2 className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                    <span>Se eliminaron con éxito {exportResult.deleted_chapters_count} archivos de capítulos sueltos del NAS</span>
+                  </div>
+                )}
+                {exportResult.overwrote_source && (
+                  <div className="mt-2.5 p-2 rounded-lg bg-amber-950/60 border border-amber-800/80 text-[11px] text-amber-300 flex items-center justify-center gap-1.5 font-semibold">
+                    <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                    <span>Se actualizó directamente el archivo original en el servidor / NAS</span>
+                  </div>
+                )}
               </div>
 
               <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
@@ -674,6 +702,86 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                   {t('exportModal.serverDestFolderDesc')}
                 </p>
               </div>
+
+              {/* Sección de Capítulos Compilados en el Tomo */}
+              {session.merged_source_files && session.merged_source_files.length > 0 && (
+                <div className="p-3.5 rounded-xl bg-purple-950/40 border border-purple-800/70 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-xs font-bold text-purple-200">
+                      <Layers className="w-4 h-4 text-purple-400" />
+                      <span>Tomo Compilado ({session.merged_source_files.length} capítulos del servidor / NAS)</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowChapterList(!showChapterList)}
+                      className="text-[11px] text-purple-300 hover:text-white underline font-semibold transition flex items-center gap-1"
+                    >
+                      <span>{showChapterList ? 'Ocultar capítulos' : 'Ver capítulos'}</span>
+                      {showChapterList ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                    </button>
+                  </div>
+
+                  {showChapterList && (
+                    <div className="p-2.5 rounded-lg bg-comic-950/80 border border-purple-900/60 max-h-40 overflow-y-auto space-y-1 font-mono text-[11px] text-slate-300">
+                      {session.merged_source_files.map((fp, i) => {
+                        const chName = session.merged_chapter_names?.[i] || fp.split(/[\\/]/).pop();
+                        const fname = fp.split(/[\\/]/).pop();
+                        return (
+                          <div key={i} className="flex items-center justify-between gap-2 py-1 border-b border-comic-800/60 last:border-none">
+                            <span className="truncate text-purple-200 font-semibold">{chName}</span>
+                            <span className="text-[10px] text-slate-500 truncate max-w-[200px]" title={fp}>{fname}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Checkbox para eliminar capítulos sueltos tras exportar */}
+                  <label className="flex items-start gap-2.5 p-2.5 rounded-lg bg-rose-950/30 hover:bg-rose-950/50 border border-rose-900/50 cursor-pointer select-none transition">
+                    <input
+                      type="checkbox"
+                      checked={deleteMergedChapters}
+                      onChange={(e) => setDeleteMergedChapters(e.target.checked)}
+                      className="w-4 h-4 mt-0.5 rounded text-rose-600 bg-comic-950 border-rose-700 focus:ring-rose-500"
+                    />
+                    <div className="space-y-0.5">
+                      <span className="text-xs font-bold text-rose-200 flex items-center gap-1.5">
+                        <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                        Eliminar los {session.merged_source_files.length} archivos de capítulos sueltos del NAS tras exportar
+                      </span>
+                      <p className="text-[10px] text-rose-300/80 leading-relaxed">
+                        Una vez generado el Tomo correctamente en tu biblioteca, MangaKuro eliminará los archivos .cbz/.cbr de los capítulos sueltos en el NAS para que no queden duplicados ocupando espacio.
+                      </p>
+                    </div>
+                  </label>
+                </div>
+              )}
+
+              {/* Opción de sobrescritura directa en NAS */}
+              {session.source_file_path && (
+                <div className="p-3 rounded-xl bg-amber-950/30 border border-amber-800/60">
+                  <label className="flex items-start gap-2.5 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={overwriteSource}
+                      onChange={(e) => setOverwriteSource(e.target.checked)}
+                      className="w-4 h-4 mt-0.5 rounded text-amber-500 bg-comic-950 border-amber-700 focus:ring-amber-500"
+                    />
+                    <div className="space-y-0.5">
+                      <span className="text-xs font-bold text-amber-200 flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                        Sobrescribir archivo original en el servidor / NAS
+                      </span>
+                      <p className="text-[10px] text-amber-300/80 font-mono truncate max-w-lg" title={session.source_file_path}>
+                        {session.source_file_path}
+                      </p>
+                      <p className="text-[10px] text-amber-200/70 leading-relaxed">
+                        Reemplaza directamente el archivo original en su ruta del NAS con esta versión editada y optimizada.
+                      </p>
+                    </div>
+                  </label>
+                </div>
+              )}
             </>
           )}
         </div>

@@ -113,7 +113,6 @@ def extract_cbz_or_zip(
 
                     if progress_callback:
                         progress_callback(idx + 1, total_images, f"Procesando imagen {idx + 1} de {total_images}...")
-                    time.sleep(0.008)
                 except Exception as page_err:
                     logger.error(f"Error procesando imagen {entry}: {page_err}")
                     continue
@@ -217,7 +216,6 @@ def extract_pdf(
 
             if progress_callback:
                 progress_callback(idx + 1, total_pages, f"Extrayendo página {idx + 1} de {total_pages}...")
-            time.sleep(0.015)
         except Exception as page_err:
             logger.error(f"Error procesando página {idx+1} del PDF: {page_err}")
             continue
@@ -405,7 +403,6 @@ def extract_epub(
 
                 if progress_callback:
                     progress_callback(idx + 1, total_images, f"Extrayendo página EPUB {idx + 1} de {total_images}...")
-                time.sleep(0.012)
 
             result.metadata.PageCount = len(result.pages)
             return result
@@ -484,7 +481,6 @@ def process_extracted_folder(
 
             if progress_callback:
                 progress_callback(idx + 1, total_images, f"{progress_title} imagen {idx + 1} de {total_images}...")
-            time.sleep(0.006)
         except Exception as page_err:
             logger.error(f"Error procesando imagen {img_path}: {page_err}")
             continue

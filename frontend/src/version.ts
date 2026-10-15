@@ -1,4 +1,4 @@
-export const APP_VERSION = 'v1.0.0';
+export const APP_VERSION = 'v1.0.1';
 export const APP_NAME = 'MangaKuro';
 export const APP_FULL_NAME = 'MangaKuro • ULTIMATE COMIC & MANGA SUITE';
 export const APP_DESCRIPTION = 'MangaKuro • ULTIMATE COMIC & MANGA SUITE - Gestor y editor profesional de cómics y mangas CBZ/CBR/PDF/EPUB para Komga';

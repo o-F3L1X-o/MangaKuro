@@ -181,6 +181,8 @@ class ExportRequest(BaseModel):
     custom_export_dir: Optional[str] = None
     export_format: str = "cbz" # cbz, zip, cbr, pdf, epub
     auto_downscale_oversized: bool = True
+    overwrite_source: bool = False
+    delete_merged_source_chapters: bool = False
 
 class QuickMetaRequest(BaseModel):
     item_type: Optional[str] = None
@@ -402,7 +404,9 @@ async def import_server_files(req: ServerImportRequest):
                 filename=fp.name,
                 item_type=req.item_type,
                 custom_series=req.custom_series,
-                custom_number=req.custom_number
+                custom_number=req.custom_number,
+                source_file_path=str(fp.resolve()),
+                is_server_file=True
             )
             imported_sessions.append({
                 "session_id": session_id,
@@ -859,7 +863,9 @@ async def export_session(session_id: str, req: ExportRequest):
             compression_format=req.compression,
             quality=req.quality,
             custom_filename=req.custom_filename,
-            auto_downscale_oversized=req.auto_downscale_oversized
+            auto_downscale_oversized=req.auto_downscale_oversized,
+            overwrite_source=req.overwrite_source,
+            delete_merged_source_chapters=req.delete_merged_source_chapters
         )
         return {"status": "processing", "message": f"Iniciando exportación en formato {req.export_format.upper()}..."}
     except Exception as e:

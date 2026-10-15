@@ -18,7 +18,8 @@ import {
   PlusCircle,
   Sliders,
   Sun,
-  Moon
+  Moon,
+  Layers
 } from 'lucide-react';
 import { SessionManifest } from '../types';
 import { APP_VERSION, APP_NAME } from '../version';
@@ -147,6 +148,16 @@ export const Header: React.FC<HeaderProps> = ({
               <div className="shrink-0 hidden md:block">
                 {readingDirectionLabel()}
               </div>
+
+              {session.merged_source_files && session.merged_source_files.length > 0 && (
+                <div 
+                  className="px-1.5 py-0.5 text-[10px] rounded bg-purple-100 dark:bg-purple-950/80 text-purple-800 dark:text-purple-300 border border-purple-300 dark:border-purple-800 font-semibold flex items-center gap-1 shrink-0"
+                  title={`${session.merged_source_files.length} capítulos compilados: ${session.merged_chapter_names?.join(', ') || ''}`}
+                >
+                  <Layers className="w-2.5 h-2.5 text-purple-600 dark:text-purple-400" />
+                  <span>{session.merged_source_files.length} caps</span>
+                </div>
+              )}
 
               <div 
                 className="flex items-center gap-1 group/rename cursor-pointer min-w-0" 

@@ -248,6 +248,8 @@ export const App: React.FC = () => {
       custom_export_dir?: string;
       export_format: 'cbz' | 'zip' | 'cbr' | 'pdf' | 'epub';
       auto_downscale_oversized?: boolean;
+      overwrite_source?: boolean;
+      delete_merged_source_chapters?: boolean;
     };
   }) => {
     const taskId = `export-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
