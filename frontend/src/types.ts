@@ -78,6 +78,7 @@ export interface ComicSessionSummary {
 export interface AppSettings {
   export_directory: string;
   staging_directory?: string;
+  app_password?: string;
   default_compression: string;
   default_quality: number;
   komga_server_url: string;
@@ -125,3 +126,36 @@ export interface SystemStats {
   active_sessions: number;
 }
 
+export interface ServerFsEntry {
+  name: string;
+  path: string;
+  size_bytes?: number;
+  size_mb?: number;
+  comic_count?: number;
+  extension?: string;
+}
+
+export interface QuickRoot {
+  name: string;
+  path: string;
+}
+
+export interface ServerFsBrowseResult {
+  current_path: string;
+  parent_path: string | null;
+  quick_roots: QuickRoot[];
+  directories: ServerFsEntry[];
+  files: ServerFsEntry[];
+}
+
+export interface ServerImportRequest {
+  file_paths: string[];
+  item_type?: 'auto' | 'tomo' | 'capitulo';
+  custom_series?: string;
+  custom_number?: string;
+}
+
+export interface AuthStatusResult {
+  auth_required: boolean;
+  authenticated: boolean;
+}

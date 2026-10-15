@@ -258,6 +258,12 @@
   },
   "settings": {
     "settingsTitle": "Configuración del Sistema",
+    "securityTitle": "Seguridad y Acceso",
+    "appPassword": "Contraseña de la Aplicación (Opcional)",
+    "appPasswordPlaceholder": "Dejar en blanco para acceso libre sin contraseña",
+    "appPasswordDesc": "Si defines una contraseña, se solicitará al acceder a la suite. Ideal para exponer MangaKuro tras un Reverse Proxy / NPM.",
+    "logoutBtn": "Cerrar sesión",
+    "logoutConfirm": "¿Deseas cerrar sesión en este navegador?",
     "stagingPath": "Ruta de almacenamiento de Staging (Disco)",
     "stagingPathPlaceholder": "ej. /app/data/staging o /mnt/pc_windows/mangakuro/staging",
     "stagingPathDesc": "Carpeta física donde se descomprimen y procesan las páginas temporalmente en caliente. Cámbiala si deseas que el Staging resida en otro disco o volumen montado.",

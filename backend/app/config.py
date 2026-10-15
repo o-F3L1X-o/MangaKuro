@@ -29,7 +29,7 @@ DEFAULT_DATA_DIR.mkdir(parents=True, exist_ok=True)
 DEFAULT_STAGING_DIR.mkdir(parents=True, exist_ok=True)
 DEFAULT_EXPORT_DIR.mkdir(parents=True, exist_ok=True)
 
-APP_VERSION = "0.9.5-rc1"
+APP_VERSION = "1.0.0"
 
 class AppSettings(BaseModel):
     export_directory: str = str(DEFAULT_EXPORT_DIR)
@@ -41,6 +41,7 @@ class AppSettings(BaseModel):
     clean_junk_files: bool = True
     split_max_height: int = 2500 # Webtoon slicer default max height
     show_system_monitor: bool = False
+    app_password: str = ""
     donation_url: str = "https://www.paypal.com/donate/?hosted_button_id=K2L2FEZ2NS6TY"
 
 def load_settings() -> AppSettings:

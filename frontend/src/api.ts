@@ -1,13 +1,63 @@
-import { SessionManifest, ComicInfo, AppSettings, ExportResult, ComicSessionSummary, SystemStats } from './types';
+import {
+  SessionManifest, ComicInfo, AppSettings, ExportResult,
+  ComicSessionSummary, SystemStats, ServerFsBrowseResult,
+  ServerImportRequest, AuthStatusResult
+} from './types';
 
 const API_BASE = '/api';
+const AUTH_STORAGE_KEY = 'mangakuro_auth_token';
+
+export function getStoredAuthToken(): string {
+  try {
+    return localStorage.getItem(AUTH_STORAGE_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
+export function setStoredAuthToken(token: string): void {
+  try {
+    localStorage.setItem(AUTH_STORAGE_KEY, token);
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+export function clearStoredAuthToken(): void {
+  try {
+    localStorage.removeItem(AUTH_STORAGE_KEY);
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+// Global fetch interceptor to append Authorization Bearer token to /api requests
+if (typeof window !== 'undefined' && window.fetch) {
+  const originalFetch = window.fetch;
+  window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const token = getStoredAuthToken();
+    if (token) {
+      init = init || {};
+      const headers = new Headers(init.headers || {});
+      if (!headers.has('Authorization')) {
+        headers.set('Authorization', `Bearer ${token}`);
+      }
+      init.headers = headers;
+    }
+    return originalFetch(input, init);
+  };
+}
 
 export function getThumbUrl(sessionId: string, filename: string): string {
-  return `${API_BASE}/session/${sessionId}/thumb/${filename}`;
+  const token = getStoredAuthToken();
+  const query = token ? `?token=${encodeURIComponent(token)}` : '';
+  return `${API_BASE}/session/${sessionId}/thumb/${filename}${query}`;
 }
 
 export function getImageUrl(sessionId: string, filename: string): string {
-  return `${API_BASE}/session/${sessionId}/image/${filename}`;
+  const token = getStoredAuthToken();
+  const query = token ? `?token=${encodeURIComponent(token)}` : '';
+  return `${API_BASE}/session/${sessionId}/image/${filename}${query}`;
 }
 
 export async function fetchAllSessions(): Promise<ComicSessionSummary[]> {
@@ -78,6 +128,11 @@ export async function uploadComic(
     const xhr = new XMLHttpRequest();
     xhr.open('POST', `${API_BASE}/upload`);
 
+    const token = getStoredAuthToken();
+    if (token) {
+      xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+    }
+
     if (xhr.upload && onUploadProgress) {
       xhr.upload.onprogress = (e) => {
         if (e.lengthComputable) {
@@ -110,8 +165,13 @@ export async function uploadComic(
   });
 
   const sessionId = uploadResult.session_id;
+  return waitForSessionReady(sessionId, onProcessingProgress);
+}
 
-  // 2. Poll real-time extraction progress until ready or error
+export function waitForSessionReady(
+  sessionId: string,
+  onProcessingProgress?: (info: ProcessingProgressInfo) => void
+): Promise<SessionManifest> {
   return new Promise((resolve, reject) => {
     let pollInterval: any = null;
     let timeoutTimer: any = null;
@@ -148,7 +208,6 @@ export async function uploadComic(
 
         if (statusData.status === 'ready') {
           cleanup();
-          // Fetch final manifest
           const manifest = await fetchSession(sessionId);
           resolve(manifest);
         } else if (statusData.status === 'error') {
@@ -751,5 +810,74 @@ export async function fetchSliceJobStatus(sessionId: string): Promise<SliceJobSt
   }
   return res.json();
 }
+
+// --- Server Filesystem Browser & Direct Ingestion ---
+
+export async function browseServerFs(path?: string): Promise<ServerFsBrowseResult> {
+  const url = path ? `${API_BASE}/server-fs/browse?path=${encodeURIComponent(path)}` : `${API_BASE}/server-fs/browse`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Error al explorar el directorio del servidor');
+  }
+  return res.json();
+}
+
+export interface ServerImportResponse {
+  success: boolean;
+  imported: { session_id: string; filename: string; path: string }[];
+  errors: string[];
+  count: number;
+}
+
+export async function importServerFiles(
+  payload: ServerImportRequest
+): Promise<ServerImportResponse> {
+  const res = await fetch(`${API_BASE}/server-fs/import`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Error al importar archivos del servidor');
+  }
+  return res.json();
+}
+
+// --- Authentication Endpoints ---
+
+export async function fetchAuthStatus(): Promise<AuthStatusResult> {
+  const res = await fetch(`${API_BASE}/auth/status`);
+  if (!res.ok) return { auth_required: false, authenticated: true };
+  return res.json();
+}
+
+export async function loginWithPassword(password: string): Promise<{ success: boolean; token: string }> {
+  const res = await fetch(`${API_BASE}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password })
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Contraseña incorrecta');
+  }
+  const data = await res.json();
+  if (data.token && data.token !== 'open') {
+    setStoredAuthToken(data.token);
+  }
+  return data;
+}
+
+export async function logoutAuth(): Promise<void> {
+  clearStoredAuthToken();
+  try {
+    await fetch(`${API_BASE}/auth/logout`, { method: 'POST' });
+  } catch {
+    // Ignore error
+  }
+}
+
 
 

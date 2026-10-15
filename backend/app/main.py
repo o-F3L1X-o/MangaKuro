@@ -20,11 +20,12 @@ except Exception:
 
 import shutil
 import tempfile
+import hashlib
 from pathlib import Path
-from typing import List, Optional
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, Response
+from typing import List, Optional, Dict, Any
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -50,6 +51,38 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    # Allow all non-API requests (static frontend files, html, css, js)
+    if not request.url.path.startswith("/api"):
+        return await call_next(request)
+
+    # Public API endpoints
+    public_paths = {"/api/auth/status", "/api/auth/login", "/api/system/stats"}
+    if request.url.path in public_paths:
+        return await call_next(request)
+
+    settings = load_settings()
+    if settings.app_password:
+        auth_header = request.headers.get("Authorization", "")
+        bearer_token = auth_header.replace("Bearer ", "").strip() if "Bearer " in auth_header else ""
+        cookie_token = request.cookies.get("mangakuro_token", "").strip()
+        query_token = (request.query_params.get("auth_token") or request.query_params.get("token") or "").strip()
+        x_pass = request.headers.get("X-App-Password", "").strip()
+        expected_token = hashlib.sha256(settings.app_password.encode()).hexdigest()
+
+        is_authenticated = (
+            bearer_token == expected_token or
+            cookie_token == expected_token or
+            query_token == expected_token or
+            x_pass == settings.app_password
+        )
+
+        if not is_authenticated:
+            return JSONResponse(status_code=401, content={"detail": "No autenticado. Por favor inicia sesión."})
+
+    return await call_next(request)
 
 # --- Schemas ---
 class ReorderRequest(BaseModel):
@@ -188,6 +221,203 @@ class BatchMetadataRequest(BaseModel):
 
 class BatchDeleteSessionsRequest(BaseModel):
     session_ids: List[str]
+
+class LoginRequest(BaseModel):
+    password: str
+
+class ServerImportRequest(BaseModel):
+    file_paths: List[str]
+    item_type: Optional[str] = "auto"
+    custom_series: Optional[str] = None
+    custom_number: Optional[str] = None
+
+# --- Authentication Endpoints ---
+
+@app.get("/api/auth/status")
+async def get_auth_status(request: Request):
+    """Checks if password protection is active and if the client is authenticated."""
+    settings = load_settings()
+    if not settings.app_password:
+        return {"auth_required": False, "authenticated": True}
+
+    auth_header = request.headers.get("Authorization", "")
+    bearer_token = auth_header.replace("Bearer ", "").strip() if "Bearer " in auth_header else ""
+    cookie_token = request.cookies.get("mangakuro_token", "").strip()
+    query_token = (request.query_params.get("auth_token") or request.query_params.get("token") or "").strip()
+    x_pass = request.headers.get("X-App-Password", "").strip()
+    expected_token = hashlib.sha256(settings.app_password.encode()).hexdigest()
+
+    is_auth = (
+        bearer_token == expected_token or
+        cookie_token == expected_token or
+        query_token == expected_token or
+        x_pass == settings.app_password
+    )
+    return {"auth_required": True, "authenticated": is_auth}
+
+@app.post("/api/auth/login")
+async def auth_login(req: LoginRequest, response: Response):
+    """Authenticates with password, sets cookie, and returns an auth token."""
+    settings = load_settings()
+    if not settings.app_password:
+        return {"success": True, "token": "open"}
+    if req.password == settings.app_password:
+        token = hashlib.sha256(settings.app_password.encode()).hexdigest()
+        response.set_cookie(
+            key="mangakuro_token",
+            value=token,
+            max_age=86400 * 30, # 30 days
+            httponly=False,
+            samesite="lax",
+            path="/"
+        )
+        return {"success": True, "token": token}
+    raise HTTPException(status_code=401, detail="Contraseña incorrecta")
+
+@app.post("/api/auth/logout")
+async def auth_logout(response: Response):
+    """Clears the auth session cookie."""
+    response.delete_cookie(key="mangakuro_token", path="/")
+    return {"success": True}
+
+# --- Server Filesystem Browser & Direct Ingestion ---
+
+ALLOWED_COMIC_EXTENSIONS = (
+    ".cbz", ".cbr", ".cb7", ".cbt",
+    ".zip", ".rar", ".7z", ".tar",
+    ".pdf", ".epub"
+)
+
+@app.get("/api/server-fs/browse")
+async def browse_server_fs(path: Optional[str] = None):
+    """Lists directories and comic files in a server path for direct ingestion."""
+    settings = load_settings()
+    export_dir = Path(settings.export_directory) if settings.export_directory else DEFAULT_EXPORT_DIR
+    data_dir = DEFAULT_DATA_DIR
+
+    quick_roots = []
+    if export_dir.exists():
+        quick_roots.append({"name": "Biblioteca Komga (Export)", "path": str(export_dir.resolve())})
+    if data_dir.exists():
+        quick_roots.append({"name": "Almacenamiento MangaKuro", "path": str(data_dir.resolve())})
+
+    for candidate, label in [
+        (Path("/comics_library"), "Biblioteca /comics_library"),
+        (Path("/downloads"), "Descargas /downloads"),
+        (Path("/media"), "Medios /media"),
+        (Path("/mnt"), "Montajes /mnt")
+    ]:
+        if candidate.exists() and not any(r["path"] == str(candidate.resolve()) for r in quick_roots):
+            quick_roots.append({"name": label, "path": str(candidate.resolve())})
+
+    if os.name == "nt":
+        for d in "CDEFGHIJKLMNOPQRSTUVWXYZ":
+            drive_path = Path(f"{d}:\\")
+            if drive_path.exists():
+                quick_roots.append({"name": f"Disco {d}:", "path": str(drive_path)})
+    else:
+        if not any(r["path"] == "/" for r in quick_roots):
+            quick_roots.append({"name": "Raíz del Sistema (/)", "path": "/"})
+
+    if not path or not path.strip():
+        target = export_dir if export_dir.exists() else (Path(quick_roots[0]["path"]) if quick_roots else Path.cwd())
+    else:
+        target = Path(path.strip())
+
+    if not target.exists() or not target.is_dir():
+        if target.parent.exists() and target.parent.is_dir():
+            target = target.parent
+        elif quick_roots:
+            target = Path(quick_roots[0]["path"])
+        else:
+            target = Path.cwd()
+
+    target = target.resolve()
+    parent_path = str(target.parent.resolve()) if target.parent != target else None
+
+    directories = []
+    files = []
+
+    try:
+        entries = list(target.iterdir())
+        for entry in sorted(entries, key=lambda e: (not e.is_dir(), e.name.lower())):
+            if entry.name.startswith("."):
+                continue
+            if entry.is_dir():
+                comic_count = 0
+                try:
+                    comic_count = sum(1 for sub in entry.iterdir() if sub.is_file() and sub.suffix.lower() in ALLOWED_COMIC_EXTENSIONS)
+                except Exception:
+                    pass
+                directories.append({
+                    "name": entry.name,
+                    "path": str(entry.resolve()),
+                    "comic_count": comic_count
+                })
+            elif entry.is_file() and entry.suffix.lower() in ALLOWED_COMIC_EXTENSIONS:
+                try:
+                    size_mb = round(entry.stat().st_size / (1024 * 1024), 2)
+                except Exception:
+                    size_mb = 0
+                files.append({
+                    "name": entry.name,
+                    "path": str(entry.resolve()),
+                    "size_mb": size_mb,
+                    "extension": entry.suffix.lower()
+                })
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Permiso denegado para acceder a esta carpeta del servidor")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al explorar directorio: {e}")
+
+    return {
+        "current_path": str(target),
+        "parent_path": parent_path,
+        "quick_roots": quick_roots,
+        "directories": directories,
+        "files": files
+    }
+
+@app.post("/api/server-fs/import")
+async def import_server_files(req: ServerImportRequest):
+    """Imports comic files directly from a server path into staging without uploading over HTTP."""
+    if not req.file_paths:
+        raise HTTPException(status_code=400, detail="No se seleccionó ningún archivo para importar")
+
+    imported_sessions = []
+    errors = []
+
+    for fp_str in req.file_paths:
+        fp = Path(fp_str)
+        if not fp.exists() or not fp.is_file():
+            errors.append(f"Archivo no encontrado: {fp.name}")
+            continue
+        if fp.suffix.lower() not in ALLOWED_COMIC_EXTENSIONS:
+            errors.append(f"Formato no compatible: {fp.name}")
+            continue
+
+        try:
+            session_id = session_manager.start_background_extraction(
+                temp_file_path=fp,
+                filename=fp.name,
+                item_type=req.item_type,
+                custom_series=req.custom_series,
+                custom_number=req.custom_number
+            )
+            imported_sessions.append({
+                "session_id": session_id,
+                "filename": fp.name,
+                "path": str(fp)
+            })
+        except Exception as e:
+            errors.append(f"Error al procesar {fp.name}: {e}")
+
+    return {
+        "success": len(imported_sessions) > 0,
+        "imported": imported_sessions,
+        "errors": errors,
+        "count": len(imported_sessions)
+    }
 
 # --- Upload & Sessions ---
 

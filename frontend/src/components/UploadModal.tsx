@@ -19,7 +19,14 @@ import {
   Clock,
   RotateCcw,
   Minimize2,
-  FolderPlus
+  FolderPlus,
+  HardDrive,
+  Folder,
+  CornerLeftUp,
+  CheckSquare,
+  Square,
+  Search,
+  Laptop
 } from 'lucide-react';
 import { 
   uploadComic, 
@@ -29,9 +36,12 @@ import {
   ExistingSessionCheck, 
   ProcessingProgressInfo,
   mergeSessions,
-  appendChaptersToTomo
+  appendChaptersToTomo,
+  browseServerFs,
+  importServerFiles,
+  waitForSessionReady
 } from '../api';
-import { SessionManifest, ComicSessionSummary } from '../types';
+import { SessionManifest, ComicSessionSummary, ServerFsBrowseResult, ServerFsEntry } from '../types';
 import { ActiveUploadTask } from './FloatingTaskWidget';
 import { isSessionTomo, cleanSeriesDisplayName } from '../utils/seriesGrouping';
 import { useTranslation } from '../i18n';
@@ -80,10 +90,91 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   const [currentIndex, setCurrentIndex] = useState<number>(-1);
   const [overallError, setOverallError] = useState<string | null>(null);
 
+  // Server Ingestion State
+  const [activeSourceTab, setActiveSourceTab] = useState<'pc' | 'server'>('pc');
+  const [serverBrowsePath, setServerBrowsePath] = useState<string>('');
+  const [serverBrowseData, setServerBrowseData] = useState<ServerFsBrowseResult | null>(null);
+  const [isBrowsingServer, setIsBrowsingServer] = useState<boolean>(false);
+  const [serverBrowseError, setServerBrowseError] = useState<string | null>(null);
+  const [selectedServerFiles, setSelectedServerFiles] = useState<Set<string>>(new Set());
+  const [isImportingServer, setIsImportingServer] = useState<boolean>(false);
+  const [serverImportMessage, setServerImportMessage] = useState<string | null>(null);
+  const [serverItemType, setServerItemType] = useState<'auto' | 'tomo' | 'capitulo'>('auto');
+  const [serverCustomSeries, setServerCustomSeries] = useState<string>(defaultSeries || '');
+
   const [uploadMode, setUploadMode] = useState<'individual' | 'merge_new_tomo' | 'append_to_tomo'>('individual');
   const [tomoSeriesName, setTomoSeriesName] = useState(defaultSeries || '');
   const [tomoVolumeNum, setTomoVolumeNum] = useState<number | ''>(1);
   const [targetTomoId, setTargetTomoId] = useState<string>('');
+
+  const loadServerDirectory = async (targetPath?: string) => {
+    setIsBrowsingServer(true);
+    setServerBrowseError(null);
+    try {
+      const data = await browseServerFs(targetPath);
+      setServerBrowseData(data);
+      setServerBrowsePath(data.current_path);
+    } catch (err: any) {
+      setServerBrowseError(err.message || 'Error al explorar el directorio del servidor');
+    } finally {
+      setIsBrowsingServer(false);
+    }
+  };
+
+  const toggleSelectServerFile = (filePath: string) => {
+    setSelectedServerFiles((prev) => {
+      const next = new Set(prev);
+      if (next.has(filePath)) {
+        next.delete(filePath);
+      } else {
+        next.add(filePath);
+      }
+      return next;
+    });
+  };
+
+  const selectAllServerFiles = () => {
+    if (!serverBrowseData) return;
+    setSelectedServerFiles(new Set(serverBrowseData.files.map((f) => f.path)));
+  };
+
+  const deselectAllServerFiles = () => {
+    setSelectedServerFiles(new Set());
+  };
+
+  const handleImportServerSelection = async () => {
+    if (selectedServerFiles.size === 0) return;
+    setIsImportingServer(true);
+    setServerImportMessage(`Importando ${selectedServerFiles.size} archivo(s) desde el disco del servidor...`);
+    try {
+      const result = await importServerFiles({
+        file_paths: Array.from(selectedServerFiles),
+        item_type: serverItemType,
+        custom_series: serverCustomSeries || assignedSeries || undefined
+      });
+
+      if (result.success && result.imported.length > 0) {
+        setServerImportMessage(`Extrayendo ${result.imported.length} cómic(s)...`);
+        try {
+          const firstSession = await waitForSessionReady(result.imported[0].session_id, (p) => {
+            setServerImportMessage(`Extrayendo ${result.imported[0].filename} (${p.percent}%): ${p.message}`);
+          });
+          onUploadSuccess(firstSession);
+          onClose();
+          return;
+        } catch (err: any) {
+          console.warn('Extracción en segundo plano en progreso:', err);
+        }
+        onClose();
+      } else {
+        setServerBrowseError((result.errors && result.errors.join(', ')) || 'No se pudo importar ningún archivo');
+      }
+    } catch (err: any) {
+      setServerBrowseError(err.message || 'Error al importar archivos');
+    } finally {
+      setIsImportingServer(false);
+    }
+  };
 
   const availableTomos = useMemo(() => {
     return allSessions.filter((s) => isSessionTomo(s));
@@ -509,6 +600,47 @@ export const UploadModal: React.FC<UploadModalProps> = ({
           </div>
         </div>
 
+        {/* Source Tab Switcher: Subir desde PC vs Explorar Servidor / NAS */}
+        <div className="flex border-b border-slate-200 dark:border-comic-800 bg-slate-100/70 dark:bg-comic-950/50 px-6 pt-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => setActiveSourceTab('pc')}
+            className={`flex items-center gap-2 pb-2.5 px-4 text-xs font-bold border-b-2 transition ${
+              activeSourceTab === 'pc'
+                ? 'border-indigo-600 text-indigo-600 dark:text-indigo-400'
+                : 'border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'
+            }`}
+          >
+            <Laptop className="w-4 h-4" />
+            <span>Subir desde mi PC</span>
+            {queue.length > 0 && (
+              <span className="px-1.5 py-0.5 rounded-full bg-indigo-600 text-white text-[10px]">
+                {queue.length}
+              </span>
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setActiveSourceTab('server');
+              if (!serverBrowseData && !isBrowsingServer) {
+                loadServerDirectory();
+              }
+            }}
+            className={`flex items-center gap-2 pb-2.5 px-4 text-xs font-bold border-b-2 transition ${
+              activeSourceTab === 'server'
+                ? 'border-indigo-600 text-indigo-600 dark:text-indigo-400'
+                : 'border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'
+            }`}
+          >
+            <HardDrive className="w-4 h-4" />
+            <span>Explorar Servidor / NAS</span>
+            <span className="px-1.5 py-0.5 rounded text-[10px] bg-emerald-500/10 text-emerald-500 dark:text-emerald-400 font-bold border border-emerald-500/20">
+              Directo
+            </span>
+          </button>
+        </div>
+
         {/* Global Error Banner */}
         {overallError && (
           <div className="mx-6 mt-4 p-3 rounded-xl bg-rose-950/60 border border-rose-800 text-rose-300 text-xs flex items-center gap-2 shrink-0">
@@ -519,7 +651,246 @@ export const UploadModal: React.FC<UploadModalProps> = ({
 
         {/* Main Body */}
         <div className="p-6 overflow-y-auto space-y-4 flex-1">
-          {queue.length === 0 ? (
+          {activeSourceTab === 'server' ? (
+            <div className="space-y-4">
+              {/* Quick Roots Shortcuts */}
+              {serverBrowseData?.quick_roots && serverBrowseData.quick_roots.length > 0 && (
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 mr-1 flex items-center gap-1">
+                    <HardDrive className="w-3 h-3 text-indigo-400" />
+                    <span>Accesos rápidos:</span>
+                  </span>
+                  {serverBrowseData.quick_roots.map((qr) => (
+                    <button
+                      key={qr.path}
+                      type="button"
+                      onClick={() => loadServerDirectory(qr.path)}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition ${
+                        serverBrowseData.current_path === qr.path
+                          ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                          : 'bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-comic-800 dark:hover:bg-comic-700 dark:text-slate-300 border-slate-300 dark:border-comic-700'
+                      }`}
+                    >
+                      {qr.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Path Navigation Bar */}
+              <div className="flex items-center gap-2 p-2 rounded-xl bg-slate-100 dark:bg-comic-950 border border-slate-200 dark:border-comic-800">
+                <button
+                  type="button"
+                  disabled={!serverBrowseData?.parent_path || isBrowsingServer}
+                  onClick={() => serverBrowseData?.parent_path && loadServerDirectory(serverBrowseData.parent_path)}
+                  className="p-1.5 rounded-lg bg-white dark:bg-comic-800 hover:bg-slate-200 dark:hover:bg-comic-700 disabled:opacity-40 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-comic-700 transition"
+                  title="Subir un nivel"
+                >
+                  <CornerLeftUp className="w-4 h-4" />
+                </button>
+
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    loadServerDirectory(serverBrowsePath);
+                  }}
+                  className="flex-1 flex items-center gap-2"
+                >
+                  <input
+                    type="text"
+                    value={serverBrowsePath}
+                    onChange={(e) => setServerBrowsePath(e.target.value)}
+                    placeholder="Ruta en el servidor (ej: /comics_library, E:\Manga...)"
+                    className="w-full px-3 py-1.5 text-xs font-mono bg-white dark:bg-comic-900 border border-slate-300 dark:border-comic-700 rounded-lg text-slate-900 dark:text-white focus:outline-hidden focus:border-indigo-500"
+                  />
+                  <button
+                    type="submit"
+                    disabled={isBrowsingServer}
+                    className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition shrink-0"
+                  >
+                    Ir
+                  </button>
+                </form>
+
+                <button
+                  type="button"
+                  disabled={isBrowsingServer}
+                  onClick={() => loadServerDirectory(serverBrowsePath)}
+                  className="p-1.5 rounded-lg bg-white dark:bg-comic-800 hover:bg-slate-200 dark:hover:bg-comic-700 disabled:opacity-40 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-comic-700 transition shrink-0"
+                  title="Actualizar directorio"
+                >
+                  <RefreshCw className={`w-4 h-4 ${isBrowsingServer ? 'animate-spin text-indigo-400' : ''}`} />
+                </button>
+              </div>
+
+              {/* Server Browse Error */}
+              {serverBrowseError && (
+                <div className="p-3 rounded-xl bg-rose-950/60 border border-rose-800 text-rose-300 text-xs flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+                  <span>{serverBrowseError}</span>
+                </div>
+              )}
+
+              {/* Subdirectories Grid */}
+              {serverBrowseData?.directories && serverBrowseData.directories.length > 0 && (
+                <div className="space-y-1.5">
+                  <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                    Carpetas ({serverBrowseData.directories.length})
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 max-h-48 overflow-y-auto pr-1">
+                    {serverBrowseData.directories.map((dir) => (
+                      <button
+                        key={dir.path}
+                        type="button"
+                        onClick={() => loadServerDirectory(dir.path)}
+                        className="flex items-center justify-between p-2 rounded-xl bg-slate-50 hover:bg-indigo-50/50 dark:bg-comic-950/60 dark:hover:bg-comic-800 border border-slate-200 dark:border-comic-800 hover:border-indigo-400 transition text-left group"
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <Folder className="w-4 h-4 text-amber-500 shrink-0 group-hover:scale-110 transition" />
+                          <span className="text-xs font-semibold text-slate-800 dark:text-slate-200 truncate">
+                            {dir.name}
+                          </span>
+                        </div>
+                        {dir.comic_count !== undefined && dir.comic_count > 0 && (
+                          <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800 shrink-0">
+                            {dir.comic_count}
+                          </span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Comic Archives List */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                    Archivos de cómic ({serverBrowseData?.files?.length || 0})
+                  </div>
+                  {serverBrowseData?.files && serverBrowseData.files.length > 0 && (
+                    <div className="flex items-center gap-2 text-xs">
+                      <button
+                        type="button"
+                        onClick={selectAllServerFiles}
+                        className="text-indigo-600 dark:text-indigo-400 hover:underline font-semibold text-[11px]"
+                      >
+                        Seleccionar todos
+                      </button>
+                      <span className="text-slate-400">•</span>
+                      <button
+                        type="button"
+                        onClick={deselectAllServerFiles}
+                        className="text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 font-semibold text-[11px]"
+                      >
+                        Deseleccionar
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {serverBrowseData?.files && serverBrowseData.files.length > 0 ? (
+                  <div className="space-y-1.5 max-h-60 overflow-y-auto pr-1">
+                    {serverBrowseData.files.map((file) => {
+                      const isSelected = selectedServerFiles.has(file.path);
+                      return (
+                        <div
+                          key={file.path}
+                          onClick={() => toggleSelectServerFile(file.path)}
+                          className={`flex items-center justify-between p-2.5 rounded-xl border cursor-pointer transition select-none ${
+                            isSelected
+                              ? 'bg-indigo-50/80 dark:bg-indigo-950/40 border-indigo-400 dark:border-indigo-600'
+                              : 'bg-white dark:bg-comic-950/60 border-slate-200 dark:border-comic-800 hover:border-slate-300 dark:hover:border-comic-700'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <div className={`w-4 h-4 rounded flex items-center justify-center shrink-0 ${isSelected ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-400'}`}>
+                              {isSelected ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
+                            </div>
+                            <FileText className="w-4 h-4 text-indigo-400 shrink-0" />
+                            <span className="text-xs font-medium text-slate-800 dark:text-slate-200 truncate">
+                              {file.name}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0 ml-2">
+                            <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
+                              {file.size_mb} MB
+                            </span>
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold uppercase bg-slate-100 dark:bg-comic-800 text-slate-600 dark:text-slate-300">
+                              {file.extension?.replace('.', '') || 'CBZ'}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  !isBrowsingServer && (
+                    <div className="p-8 text-center rounded-xl border border-dashed border-slate-300 dark:border-comic-800 text-slate-500 dark:text-slate-400 text-xs">
+                      No se encontraron archivos de cómic soportados (.cbz, .cbr, .pdf, .zip, etc.) en esta carpeta.
+                    </div>
+                  )
+                )}
+              </div>
+
+              {/* Import Configuration & Action Bar */}
+              {selectedServerFiles.size > 0 && (
+                <div className="p-4 rounded-xl bg-indigo-50/90 dark:bg-comic-950 border border-indigo-200 dark:border-indigo-800/80 space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                      <div className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                        <span>{selectedServerFiles.size} cómic(s) seleccionados para importar</span>
+                      </div>
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                        Se crearán directamente en Staging copiando desde el disco del servidor sin consumir red.
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={serverItemType}
+                        onChange={(e) => setServerItemType(e.target.value as any)}
+                        className="px-2.5 py-1.5 rounded-lg bg-white dark:bg-comic-900 border border-slate-300 dark:border-comic-700 text-xs text-slate-800 dark:text-slate-200"
+                      >
+                        <option value="auto">Auto-detectar</option>
+                        <option value="tomo">Tomos</option>
+                        <option value="capitulo">Capítulos</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {serverImportMessage && (
+                    <div className="p-2.5 rounded-lg bg-white dark:bg-comic-900 border border-indigo-200 dark:border-indigo-800 text-xs text-indigo-700 dark:text-indigo-300 flex items-center gap-2">
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin shrink-0 text-indigo-500" />
+                      <span>{serverImportMessage}</span>
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-end gap-2 pt-1">
+                    <button
+                      type="button"
+                      disabled={isImportingServer}
+                      onClick={handleImportServerSelection}
+                      className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-bold shadow-lg shadow-indigo-600/30 transition active:scale-95"
+                    >
+                      {isImportingServer ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin" />
+                          <span>Importando...</span>
+                        </>
+                      ) : (
+                        <>
+                          <HardDrive className="w-4 h-4" />
+                          <span>Importar {selectedServerFiles.size} cómic(s) al Gestor</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : queue.length === 0 ? (
             /* Dropzone Empty State */
             <div
               onDragOver={(e) => {

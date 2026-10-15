@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { X, Save, Settings as SettingsIcon, CheckCircle2, Trash2, Sparkles, ShieldCheck, Heart } from 'lucide-react';
+import { X, Save, Settings as SettingsIcon, CheckCircle2, Trash2, Sparkles, ShieldCheck, Heart, LogOut } from 'lucide-react';
 import { AppSettings } from '../types';
-import { saveSettings, cleanupAllStaging, cleanupOrphanedStaging } from '../api';
+import { saveSettings, cleanupAllStaging, cleanupOrphanedStaging, logoutAuth } from '../api';
 import { APP_VERSION, DEFAULT_DONATION_URL } from '../version';
 import { useTranslation } from '../i18n';
 
@@ -238,8 +238,48 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
               </div>
 
-              {/* Column B: Performance, Maintenance & Donations */}
+              {/* Column B: Performance, Security, Maintenance & Donations */}
               <div className="space-y-4">
+                {/* Security & Access Protection */}
+                <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-comic-950/60 border border-slate-200 dark:border-comic-800 space-y-2 shadow-sm">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800 dark:text-slate-300 uppercase tracking-wider">
+                    <ShieldCheck className="w-4 h-4 text-emerald-500" />
+                    <span>{t('settings.securityTitle') || 'Seguridad y Acceso'}</span>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-400 mb-1">
+                      {t('settings.appPassword') || 'Contraseña de la Aplicación (Opcional)'}
+                    </label>
+                    <input
+                      type="password"
+                      value={formData.app_password || ''}
+                      onChange={(e) => setFormData({ ...formData, app_password: e.target.value })}
+                      placeholder={t('settings.appPasswordPlaceholder') || 'Dejar en blanco para acceso libre sin contraseña'}
+                      className="w-full px-3 py-2 rounded-lg bg-white dark:bg-comic-950 border border-slate-300 dark:border-comic-700/80 text-slate-900 dark:text-white text-xs font-mono focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 focus:outline-none transition"
+                    />
+                    <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed mt-1">
+                      {t('settings.appPasswordDesc') || 'Si defines una contraseña, se solicitará al acceder a la suite. Ideal para exponer MangaKuro tras un Reverse Proxy / NPM.'}
+                    </p>
+                    {settings.app_password && (
+                      <div className="pt-2 flex justify-end">
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (window.confirm(t('settings.logoutConfirm') || '¿Deseas cerrar sesión en este navegador?')) {
+                              await logoutAuth();
+                              window.location.reload();
+                            }
+                          }}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/60 border border-rose-200 dark:border-rose-800 text-rose-600 dark:text-rose-400 text-xs font-semibold transition cursor-pointer"
+                        >
+                          <LogOut className="w-3.5 h-3.5" />
+                          <span>{t('settings.logoutBtn') || 'Cerrar sesión'}</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
                 {/* Performance Monitor */}
                 <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-comic-950/60 border border-slate-200 dark:border-comic-800 space-y-2 shadow-sm">
                   <h4 className="text-xs font-bold text-slate-800 dark:text-slate-300 uppercase tracking-wider">

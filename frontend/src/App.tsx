@@ -12,7 +12,9 @@ import {
   Bookmark,
   ImagePlus,
   Search,
-  X
+  X,
+  ShieldCheck,
+  AlertCircle
 } from 'lucide-react';
 import { SessionManifest, ComicInfo, AppSettings, PageItem, ComicSessionSummary } from './types';
 import { 
@@ -39,7 +41,10 @@ import {
   downscaleAllOversized,
   sliceWebtoonBatch,
   fetchSliceJobStatus,
-  undoSession
+  undoSession,
+  fetchAuthStatus,
+  loginWithPassword,
+  logoutAuth
 } from './api';
 
 import { Header } from './components/Header';
@@ -127,6 +132,14 @@ export const App: React.FC = () => {
 
   const [isSaving, setIsSaving] = useState(false);
   const [historyStack, setHistoryStack] = useState<SessionManifest[]>([]);
+
+  // Authentication Protection State
+  const [authRequired, setAuthRequired] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(true);
+  const [authChecked, setAuthChecked] = useState(false);
+  const [passwordInput, setPasswordInput] = useState('');
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
 
   // Safety watchdog: ensure isSaving never stays stuck in the UI
   useEffect(() => {
@@ -494,22 +507,61 @@ export const App: React.FC = () => {
   }, [activeSliceTask, loadSessions]);
 
   useEffect(() => {
-    fetchSettings()
-      .then(setSettings)
-      .catch((err) => console.warn('Could not load settings:', err));
-    loadSessions().then((list) => {
-      if (!list || list.length === 0) return;
-      const lastActiveId = getStoredActiveSessionId();
-      const targetId = (lastActiveId && list.some((s) => s.session_id === lastActiveId))
-        ? lastActiveId
-        : null;
-      if (targetId) {
-        fetchSession(targetId)
-          .then(setSession)
-          .catch((e) => console.warn('Could not restore last active session:', e));
-      }
-    });
+    fetchAuthStatus()
+      .then((status) => {
+        setAuthRequired(status.auth_required);
+        setIsAuthenticated(status.authenticated);
+        setAuthChecked(true);
+        if (!status.auth_required || status.authenticated) {
+          fetchSettings()
+            .then(setSettings)
+            .catch((err) => console.warn('Could not load settings:', err));
+          loadSessions().then((list) => {
+            if (!list || list.length === 0) return;
+            const lastActiveId = getStoredActiveSessionId();
+            const targetId = (lastActiveId && list.some((s) => s.session_id === lastActiveId))
+              ? lastActiveId
+              : null;
+            if (targetId) {
+              fetchSession(targetId)
+                .then(setSession)
+                .catch((e) => console.warn('Could not restore last active session:', e));
+            }
+          });
+        }
+      })
+      .catch(() => {
+        setAuthChecked(true);
+      });
   }, [loadSessions]);
+
+  const handleLoginSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!passwordInput.trim()) return;
+    setIsLoggingIn(true);
+    setLoginError(null);
+    try {
+      await loginWithPassword(passwordInput);
+      setIsAuthenticated(true);
+      fetchSettings().then(setSettings).catch(() => {});
+      loadSessions().then((list) => {
+        if (!list || list.length === 0) return;
+        const lastActiveId = getStoredActiveSessionId();
+        const targetId = (lastActiveId && list.some((s) => s.session_id === lastActiveId))
+          ? lastActiveId
+          : null;
+        if (targetId) {
+          fetchSession(targetId)
+            .then(setSession)
+            .catch(() => {});
+        }
+      });
+    } catch (err: any) {
+      setLoginError(err.message || 'Contraseña incorrecta');
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
 
   // Continuously record scroll position for the active session
   useEffect(() => {
@@ -970,6 +1022,62 @@ export const App: React.FC = () => {
       );
     }
   };
+
+  if (authChecked && authRequired && !isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
+        <div className="w-full max-w-sm bg-slate-950 border border-slate-800 rounded-3xl p-8 shadow-2xl flex flex-col items-center text-center animate-in fade-in zoom-in-95 duration-200">
+          <div className="w-16 h-16 rounded-3xl bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400 mb-5 shadow-lg shadow-indigo-500/10">
+            <ShieldCheck className="w-8 h-8" />
+          </div>
+          <h2 className="text-2xl font-black text-white tracking-tight">
+            Manga<span className="text-indigo-400">Kuro</span>
+          </h2>
+          <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mt-1 mb-6">
+            Acceso Protegido
+          </p>
+
+          {loginError && (
+            <div className="w-full mb-4 p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-center gap-2 text-left">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{loginError}</span>
+            </div>
+          )}
+
+          <form onSubmit={handleLoginSubmit} className="w-full space-y-4">
+            <div className="text-left">
+              <label className="block text-xs font-bold text-slate-300 mb-1.5">
+                Contraseña de Acceso
+              </label>
+              <input
+                type="password"
+                autoFocus
+                value={passwordInput}
+                onChange={(e) => {
+                  setPasswordInput(e.target.value);
+                  setLoginError(null);
+                }}
+                placeholder="Introduce la contraseña..."
+                className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 focus:outline-hidden transition font-mono"
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={isLoggingIn || !passwordInput.trim()}
+              className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-bold shadow-lg shadow-indigo-600/30 transition active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
+            >
+              {isLoggingIn ? (
+                <span>Verificando...</span>
+              ) : (
+                <span>Entrar a MangaKuro</span>
+              )}
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-200 dark:bg-comic-950 text-slate-900 dark:text-slate-100 flex flex-col justify-between pb-14">
