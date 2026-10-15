@@ -17,7 +17,8 @@ import {
   Download,
   Upload,
   Loader2,
-  Check
+  Check,
+  Search
 } from 'lucide-react';
 import { ComicInfo, ComicSessionSummary } from '../types';
 import { fetchSession } from '../api';
@@ -36,6 +37,7 @@ interface MetadataDrawerProps {
   allSessions?: ComicSessionSummary[];
   activeSessionId?: string;
   onOpenCloneModal?: (currentMetadata?: ComicInfo) => void;
+  onOpenOnlineSearch?: () => void;
 }
 
 export const MetadataDrawer: React.FC<MetadataDrawerProps> = ({
@@ -50,7 +52,8 @@ export const MetadataDrawer: React.FC<MetadataDrawerProps> = ({
   markedSessions = [],
   allSessions = [],
   activeSessionId,
-  onOpenCloneModal
+  onOpenCloneModal,
+  onOpenOnlineSearch
 }) => {
   const { t } = useTranslation();
   const [formData, setFormData] = useState<ComicInfo>({ ...metadata });
@@ -215,6 +218,27 @@ export const MetadataDrawer: React.FC<MetadataDrawerProps> = ({
             </div>
           </div>
         </div>
+
+        {/* Online Search Banner / Action */}
+        {onOpenOnlineSearch && (
+          <div className="px-6 py-2.5 bg-gradient-to-r from-purple-950/70 via-indigo-950/70 to-purple-950/70 border-b border-purple-800/60 flex items-center justify-between gap-3 shadow-xs">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-purple-400 shrink-0" />
+              <div className="text-xs">
+                <span className="font-bold text-white">¿Faltan datos o portada?</span>
+                <span className="text-slate-400 hidden sm:inline ml-1.5">Busca tomos, capítulos y portadas en MangaDex & AniList.</span>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={onOpenOnlineSearch}
+              className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-indigo-600/30 transition shrink-0 cursor-pointer active:scale-95"
+            >
+              <Search className="w-3.5 h-3.5" />
+              <span>Buscar Online</span>
+            </button>
+          </div>
+        )}
 
         {/* Quick Clone / Import Bar */}
         {allSessions && allSessions.length > 1 && (

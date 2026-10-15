@@ -46,6 +46,7 @@ interface HeaderProps {
   onToggleMonitor?: () => void;
   onOpenDonation?: () => void;
   onOpenImageAnalysis?: () => void;
+  onOpenOnlineSearch?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -67,7 +68,8 @@ export const Header: React.FC<HeaderProps> = ({
   isMonitorOpen = false,
   onToggleMonitor,
   onOpenDonation,
-  onOpenImageAnalysis
+  onOpenImageAnalysis,
+  onOpenOnlineSearch
 }) => {
   const { t, language, setLanguage } = useTranslation();
   const { theme, toggleTheme } = useTheme();
@@ -246,6 +248,18 @@ export const Header: React.FC<HeaderProps> = ({
                   <FileText className="w-4 h-4 text-indigo-500 dark:text-indigo-400 shrink-0" />
                   <span className="hidden md:inline">{t('header.comicInfo')}</span>
                 </button>
+
+                {onOpenOnlineSearch && (
+                  <button
+                    type="button"
+                    onClick={onOpenOnlineSearch}
+                    className="h-8 px-2.5 sm:px-3 rounded-lg bg-purple-100 hover:bg-purple-200 text-purple-900 border border-purple-300 dark:bg-purple-950/80 dark:hover:bg-purple-900/80 dark:text-purple-300 dark:border-purple-700/80 text-xs font-bold transition active:scale-95 flex items-center gap-1.5 shrink-0 whitespace-nowrap cursor-pointer shadow-xs"
+                    title="Buscar tomos, capítulos y portadas oficiales online"
+                  >
+                    <Sparkles className="w-4 h-4 text-purple-600 dark:text-purple-400 shrink-0" />
+                    <span className="hidden lg:inline">Buscar Online</span>
+                  </button>
+                )}
 
                 <button
                   type="button"

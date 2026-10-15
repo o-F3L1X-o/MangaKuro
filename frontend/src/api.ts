@@ -1,7 +1,7 @@
 import {
   SessionManifest, ComicInfo, AppSettings, ExportResult,
   ComicSessionSummary, SystemStats, ServerFsBrowseResult,
-  ServerImportRequest, AuthStatusResult
+  ServerImportRequest, AuthStatusResult, OnlineSearchResult, VolumeCoverItem
 } from './types';
 
 const API_BASE = '/api';
@@ -879,6 +879,37 @@ export async function logoutAuth(): Promise<void> {
   } catch {
     // Ignore error
   }
+}
+
+export async function searchOnlineManga(query: string, source: string = 'auto'): Promise<OnlineSearchResult[]> {
+  const params = new URLSearchParams({ query, source });
+  const res = await fetch(`${API_BASE}/search/online?${params.toString()}`);
+  if (!res.ok) throw new Error('Error al realizar búsqueda online');
+  const data = await res.json();
+  return data.results || [];
+}
+
+export async function fetchMangaDexVolumeCovers(mangaId: string): Promise<VolumeCoverItem[]> {
+  const res = await fetch(`${API_BASE}/search/mangadex/${mangaId}/covers`);
+  if (!res.ok) throw new Error('Error al cargar portadas de tomos');
+  const data = await res.json();
+  return data.covers || [];
+}
+
+export async function applyOnlineCover(
+  sessionId: string,
+  params: { image_url: string; mode: 'insert_first' | 'replace_first'; custom_name?: string }
+): Promise<SessionManifest> {
+  const res = await fetch(`${API_BASE}/session/${sessionId}/apply-online-cover`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params)
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: 'Error al aplicar portada online' }));
+    throw new Error(err.detail || 'Error al aplicar portada online');
+  }
+  return res.json();
 }
 
 

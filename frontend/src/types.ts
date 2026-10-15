@@ -168,3 +168,34 @@ export interface AuthStatusResult {
   auth_required: boolean;
   authenticated: boolean;
 }
+
+export interface OnlineSearchResult {
+  id: string;
+  provider: 'mangadex' | 'anilist' | 'openlibrary';
+  provider_label: string;
+  title: string;
+  title_spanish?: string;
+  title_english?: string;
+  title_romaji?: string;
+  synonyms: string[];
+  synopsis_es: string;
+  synopsis_has_es: boolean;
+  volumes?: number | string | null;
+  chapters?: number | string | null;
+  status: string;
+  status_es: string;
+  year?: number | string | null;
+  genres: string[];
+  authors: string[];
+  cover_url?: string;
+  has_volume_covers: boolean;
+}
+
+export interface VolumeCoverItem {
+  volume: string;
+  volume_number?: string;
+  cover_url: string;
+  cover_url_full?: string;
+  description?: string;
+}
+

@@ -1860,6 +1860,79 @@ class SessionManager:
         self.save_session(manifest)
         return manifest
 
+    def apply_online_cover(
+        self,
+        session_id: str,
+        image_url: str,
+        mode: str = "insert_first",  # "insert_first" or "replace_first"
+        custom_name: Optional[str] = "Portada Oficial.jpg"
+    ) -> SessionManifest:
+        """Downloads an online cover image, optimizes it, and sets it as session cover (inserting as page #1 or replacing current page #1)."""
+        manifest = self.load_session(session_id)
+        if not manifest:
+            raise ValueError("Sesión no encontrada")
+
+        sdir = self.get_session_dir(session_id)
+        images_dir = sdir / "images"
+        thumbs_dir = sdir / "thumbnails"
+        images_dir.mkdir(parents=True, exist_ok=True)
+        thumbs_dir.mkdir(parents=True, exist_ok=True)
+
+        import io
+        import urllib.request
+        req = urllib.request.Request(
+            image_url,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) MangaKuro/1.0"}
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = resp.read()
+
+        pil_img = Image.open(io.BytesIO(data))
+        if pil_img.mode in ("RGBA", "LA", "P"):
+            bg = Image.new("RGB", pil_img.size, (255, 255, 255))
+            if pil_img.mode == "P":
+                pil_img = pil_img.convert("RGBA")
+            bg.paste(pil_img, mask=pil_img.split()[3] if len(pil_img.split()) == 4 else None)
+            pil_img = bg
+        elif pil_img.mode != "RGB":
+            pil_img = pil_img.convert("RGB")
+
+        pid = str(uuid.uuid4())
+        fname = f"cover_online_{pid[:8]}.jpg"
+        tname = f"thumb_cover_online_{pid[:8]}.webp"
+        saved_path = images_dir / fname
+        thumb_path = thumbs_dir / tname
+
+        pil_img.save(saved_path, format="JPEG", quality=92, optimize=True)
+        w, h = create_thumbnail(saved_path, thumb_path)
+
+        new_page = PageItem(
+            id=pid,
+            order=1,
+            filename=fname,
+            thumb_filename=tname,
+            original_name=custom_name or "Portada Oficial.jpg",
+            width=w,
+            height=h,
+            rotation=0,
+            is_cover=True
+        )
+
+        if mode == "replace_first" and len(manifest.pages) > 0:
+            manifest.pages[0] = new_page
+        else:
+            manifest.pages.insert(0, new_page)
+
+        # Renumber all pages and ensure page 1 is cover
+        for idx, p in enumerate(manifest.pages):
+            p.order = idx + 1
+            p.is_cover = (idx == 0)
+
+        manifest.metadata.PageCount = len(manifest.pages)
+        manifest.updated_at = time.time()
+        self.save_session(manifest)
+        return manifest
+
     def merge_sessions(
         self,
         source_session_ids: List[str],

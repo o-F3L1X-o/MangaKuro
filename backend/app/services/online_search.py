@@ -1,0 +1,408 @@
+import json
+import logging
+import re
+import urllib.parse
+import urllib.request
+from typing import List, Dict, Any, Optional
+
+logger = logging.getLogger("online_search")
+
+HEADERS = {
+    "User-Agent": "MangaKuro/1.0 (https://github.com/o-F3L1X-o/MangaKuro)",
+    "Accept": "application/json"
+}
+
+GENRE_TRANSLATIONS = {
+    "Action": "Acción",
+    "Adventure": "Aventura",
+    "Comedy": "Comedia",
+    "Drama": "Drama",
+    "Fantasy": "Fantasía",
+    "Horror": "Terror",
+    "Mystery": "Misterio",
+    "Psychological": "Psicológico",
+    "Romance": "Romance",
+    "Sci-Fi": "Ciencia Ficción",
+    "Slice of Life": "Recuentos de la vida",
+    "Supernatural": "Sobrenatural",
+    "Thriller": "Suspense",
+    "Isekai": "Isekai",
+    "Reincarnation": "Reencarnación",
+    "Magic": "Magia",
+    "Martial Arts": "Artes Marciales",
+    "Historical": "Histórico",
+    "School": "Escolar",
+    "Sports": "Deportes",
+    "Mecha": "Mecha",
+    "Music": "Música",
+    "Demons": "Demonios",
+    "Vampire": "Vampiros",
+    "Military": "Militar",
+    "Shounen": "Shōnen",
+    "Seinen": "Seinen",
+    "Shoujo": "Shōjo",
+    "Josei": "Josei",
+    "Webtoon": "Webtoon",
+    "Monster Girls": "Chicas Monstruo"
+}
+
+def translate_genre(g: str) -> str:
+    return GENRE_TRANSLATIONS.get(g, g)
+
+FRENCH_EXCLUSIONS = {"moi", "quand", "je", "dans", "avec", "cette", "mon", "ma", "mes", "du", "au", "aux", "pourquoi", "est", "réincarne", "reincarne"}
+GERMAN_EXCLUSIONS = {"der", "die", "das", "und", "ein", "eine", "einer", "nicht", "dem", "den", "tagebücher"}
+ITALIAN_EXCLUSIONS = {"sono", "reincarnato", "nella", "nello", "degli", "delle", "della"}
+SPANISH_KEYWORDS = {"el", "la", "los", "las", "un", "una", "del", "que", "por", "para", "con", "en", "como", "vez", "aquella", "mundo", "vida", "reencarnado", "reencarné", "reencarnación", "tiempo", "cuando", "hombre", "otra", "otro"}
+
+def is_likely_spanish_title(text: str) -> bool:
+    if not text:
+        return False
+    lower = text.lower()
+    words = set(re.findall(r"\b[a-záéíóúñü]+\b", lower))
+    if words & FRENCH_EXCLUSIONS or words & GERMAN_EXCLUSIONS or words & ITALIAN_EXCLUSIONS:
+        return False
+    if any(c in lower for c in "áéíóúñ"):
+        return True
+    if words & SPANISH_KEYWORDS and not (words & {"the", "of", "and", "is", "that", "this", "to", "for"}):
+        return True
+    return False
+
+def search_mangadex(query: str, limit: int = 8) -> List[Dict[str, Any]]:
+    """
+    Searches MangaDex for manga titles, extracting Spanish synopsis, alternate titles,
+    status, volume and chapter counts, and high-quality cover art.
+    """
+    results = []
+    try:
+        url = (
+            f"https://api.mangadex.org/manga?title={urllib.parse.quote(query)}"
+            f"&limit={limit}&includes[]=cover_art&includes[]=author&includes[]=artist"
+        )
+        req = urllib.request.Request(url, headers=HEADERS)
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read().decode("utf-8")).get("data", [])
+
+        for item in data:
+            m_id = item.get("id")
+            attrs = item.get("attributes", {})
+            
+            # 1. Titles extraction
+            raw_title = attrs.get("title", {})
+            title_main = raw_title.get("en") or raw_title.get("ja") or next(iter(raw_title.values()), "")
+            
+            title_es = None
+            title_en = raw_title.get("en")
+            title_ja = raw_title.get("ja-ro") or raw_title.get("ja")
+
+            alt_titles = attrs.get("altTitles", [])
+            synonyms_list = []
+            for alt in alt_titles:
+                for lang_code, val in alt.items():
+                    if lang_code in ("es", "es-la") and not title_es:
+                        title_es = val
+                    if lang_code == "en" and not title_en:
+                        title_en = val
+                    if val and val not in synonyms_list:
+                        synonyms_list.append(val)
+
+            # 2. Description in Spanish, fallback English
+            desc_map = attrs.get("description", {})
+            desc_es = desc_map.get("es") or desc_map.get("es-la")
+            desc_en = desc_map.get("en", "")
+            
+            # Clean markdown/HTML links in description
+            final_synopsis = desc_es if desc_es else desc_en
+            if final_synopsis:
+                final_synopsis = re.sub(r"\[.*?\]\(.*?\)", "", final_synopsis)
+                final_synopsis = re.sub(r"[*_~`]", "", final_synopsis).strip()
+
+            # 3. Status
+            raw_status = attrs.get("status", "")
+            status_map = {
+                "ongoing": "En emisión",
+                "completed": "Finalizado",
+                "hiatus": "En pausa",
+                "cancelled": "Cancelado"
+            }
+            status_es = status_map.get(raw_status, raw_status.capitalize() if raw_status else "Desconocido")
+
+            # 4. Covers
+            cover_url = None
+            for rel in item.get("relationships", []):
+                if rel.get("type") == "cover_art":
+                    cover_fn = rel.get("attributes", {}).get("fileName")
+                    if cover_fn:
+                        cover_url = f"https://uploads.mangadex.org/covers/{m_id}/{cover_fn}.512.jpg"
+                    break
+
+            # 5. Authors
+            authors = []
+            for rel in item.get("relationships", []):
+                if rel.get("type") in ("author", "artist"):
+                    name = rel.get("attributes", {}).get("name")
+                    if name and name not in authors:
+                        authors.append(name)
+
+            # 6. Tags/Genres
+            tags = []
+            for tag in attrs.get("tags", []):
+                tname = tag.get("attributes", {}).get("name", {}).get("en")
+                if tname:
+                    tags.append(translate_genre(tname))
+
+            # 7. Volume and chapter counts
+            last_vol = attrs.get("lastVolume")
+            last_ch = attrs.get("lastChapter")
+
+            results.append({
+                "id": m_id,
+                "provider": "mangadex",
+                "provider_label": "MangaDex (Scanlation / ES)",
+                "title": title_es or title_main,
+                "title_spanish": title_es,
+                "title_english": title_en,
+                "title_romaji": title_ja or title_main,
+                "synonyms": synonyms_list[:8],
+                "synopsis_es": final_synopsis or "",
+                "synopsis_has_es": bool(desc_es),
+                "volumes": last_vol if last_vol and last_vol.strip() else None,
+                "chapters": last_ch if last_ch and last_ch.strip() else None,
+                "status": raw_status,
+                "status_es": status_es,
+                "year": attrs.get("year"),
+                "genres": tags[:8],
+                "authors": authors,
+                "cover_url": cover_url,
+                "has_volume_covers": True
+            })
+
+    except Exception as e:
+        logger.warning(f"Error fetching from MangaDex: {e}")
+
+    return results
+
+def get_mangadex_volume_covers(manga_id: str, limit: int = 36) -> List[Dict[str, Any]]:
+    """Fetches volume-specific covers for a MangaDex manga ID."""
+    covers = []
+    try:
+        url = f"https://api.mangadex.org/cover?manga[]={manga_id}&limit={limit}&order[volume]=asc"
+        req = urllib.request.Request(url, headers=HEADERS)
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            data = json.loads(resp.read().decode("utf-8")).get("data", [])
+
+        for c in data:
+            fn = c.get("attributes", {}).get("fileName")
+            vol = c.get("attributes", {}).get("volume")
+            desc = c.get("attributes", {}).get("description")
+            if fn:
+                covers.append({
+                    "volume": f"Tomo {vol}" if vol else "Portada Alternativa",
+                    "volume_number": vol,
+                    "cover_url": f"https://uploads.mangadex.org/covers/{manga_id}/{fn}.512.jpg",
+                    "cover_url_full": f"https://uploads.mangadex.org/covers/{manga_id}/{fn}",
+                    "description": desc or ""
+                })
+    except Exception as e:
+        logger.warning(f"Error fetching MangaDex volume covers for {manga_id}: {e}")
+
+    return covers
+
+def search_anilist(query: str, limit: int = 6) -> List[Dict[str, Any]]:
+    """
+    Searches AniList GraphQL API for exact volume counts, chapter counts,
+    and ultra high-resolution official cover art.
+    """
+    results = []
+    gql_query = """
+    query ($search: String, $limit: Int) {
+      Page(page: 1, perPage: $limit) {
+        media(search: $search, type: MANGA) {
+          id
+          title {
+            romaji
+            english
+            native
+            userPreferred
+          }
+          synonyms
+          volumes
+          chapters
+          status
+          description(asHtml: false)
+          genres
+          countryOfOrigin
+          startDate {
+            year
+          }
+          coverImage {
+            extraLarge
+            large
+          }
+          staff(perPage: 3) {
+            edges {
+              role
+              node {
+                name {
+                  full
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    """
+    try:
+        body = json.dumps({"query": gql_query, "variables": {"search": query, "limit": limit}}).encode("utf-8")
+        req = urllib.request.Request(
+            "https://graphql.anilist.co",
+            data=body,
+            headers={**HEADERS, "Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(req, timeout=7) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            items = data.get("data", {}).get("Page", {}).get("media", [])
+
+        for item in items:
+            t = item.get("title", {})
+            romaji = t.get("romaji", "")
+            english = t.get("english", "")
+            user_pref = t.get("userPreferred", "")
+            
+            raw_status = item.get("status", "")
+            status_map = {
+                "FINISHED": "Finalizado",
+                "RELEASING": "En emisión",
+                "NOT_YET_RELEASED": "Próximamente",
+                "CANCELLED": "Cancelado",
+                "HIATUS": "En pausa"
+            }
+            status_es = status_map.get(raw_status, raw_status)
+
+            raw_desc = item.get("description", "")
+            if raw_desc:
+                raw_desc = re.sub(r"<br\s*/?>", "\n", raw_desc)
+                raw_desc = re.sub(r"<.*?>", "", raw_desc).strip()
+
+            authors = []
+            for edge in item.get("staff", {}).get("edges", []):
+                aname = edge.get("node", {}).get("name", {}).get("full")
+                if aname and aname not in authors:
+                    authors.append(aname)
+
+            genres = [translate_genre(g) for g in item.get("genres", [])]
+
+            cover = item.get("coverImage", {}).get("extraLarge") or item.get("coverImage", {}).get("large")
+
+            synonyms = item.get("synonyms", [])
+            # Detect potential Spanish title from synonyms using linguistic markers
+            title_es = next((s for s in synonyms if is_likely_spanish_title(s)), None)
+
+            results.append({
+                "id": str(item.get("id")),
+                "provider": "anilist",
+                "provider_label": "AniList (Oficial)",
+                "title": title_es or english or romaji or user_pref,
+                "title_spanish": title_es,
+                "title_english": english,
+                "title_romaji": romaji,
+                "synonyms": synonyms[:8],
+                "synopsis_es": raw_desc or "",
+                "synopsis_has_es": False,
+                "volumes": item.get("volumes"),
+                "chapters": item.get("chapters"),
+                "status": raw_status,
+                "status_es": status_es,
+                "year": item.get("startDate", {}).get("year"),
+                "genres": genres[:8],
+                "authors": authors,
+                "cover_url": cover,
+                "has_volume_covers": False
+            })
+
+    except Exception as e:
+        logger.warning(f"Error fetching from AniList: {e}")
+
+    return results
+
+def search_openlibrary(query: str, limit: int = 5) -> List[Dict[str, Any]]:
+    """
+    Searches Open Library for Western comics, graphic novels, and Spanish editions.
+    """
+    results = []
+    try:
+        url = f"https://openlibrary.org/search.json?q={urllib.parse.quote(query)}&limit={limit}"
+        req = urllib.request.Request(url, headers=HEADERS)
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            data = json.loads(resp.read().decode("utf-8")).get("docs", [])
+
+        for doc in data:
+            cover_i = doc.get("cover_i")
+            cover_url = f"https://covers.openlibrary.org/b/id/{cover_i}-L.jpg" if cover_i else None
+            
+            publish_year = doc.get("first_publish_year")
+            authors = doc.get("author_name", [])
+            publisher = doc.get("publisher", [""])[0] if doc.get("publisher") else ""
+
+            results.append({
+                "id": doc.get("key", "").replace("/works/", ""),
+                "provider": "openlibrary",
+                "provider_label": "Open Library (Cómic / Libros)",
+                "title": doc.get("title", ""),
+                "title_spanish": doc.get("title", ""),
+                "title_english": doc.get("title", ""),
+                "title_romaji": None,
+                "synonyms": [],
+                "synopsis_es": f"Editorial: {publisher}. Año de edición: {publish_year}." if publisher else "",
+                "synopsis_has_es": True,
+                "volumes": None,
+                "chapters": None,
+                "status": "published",
+                "status_es": "Publicado",
+                "year": publish_year,
+                "genres": ["Cómic"],
+                "authors": authors[:3],
+                "cover_url": cover_url,
+                "has_volume_covers": False
+            })
+    except Exception as e:
+        logger.warning(f"Error fetching from OpenLibrary: {e}")
+
+    return results
+
+def unified_online_search(query: str, source: str = "auto") -> List[Dict[str, Any]]:
+    """
+    Executes a multi-provider search with Spanish prioritization and bilingual matching.
+    """
+    clean_query = query.strip()
+    if not clean_query:
+        return []
+
+    combined: List[Dict[str, Any]] = []
+
+    if source in ("auto", "mangadex"):
+        combined.extend(search_mangadex(clean_query, limit=6))
+
+    if source in ("auto", "anilist"):
+        combined.extend(search_anilist(clean_query, limit=6))
+
+    if source in ("auto", "openlibrary") and len(combined) < 4:
+        combined.extend(search_openlibrary(clean_query, limit=3))
+
+    # Sort results: prioritize results with Spanish synopsis or Spanish title, then those with volume/chapter counts
+    def score_result(r: Dict[str, Any]) -> int:
+        score = 0
+        if r.get("title_spanish"):
+            score += 4
+        if r.get("synopsis_has_es"):
+            score += 3
+        if r.get("volumes") is not None:
+            score += 2
+        if r.get("chapters") is not None:
+            score += 1
+        if r.get("cover_url"):
+            score += 2
+        return score
+
+    combined.sort(key=score_result, reverse=True)
+    return combined

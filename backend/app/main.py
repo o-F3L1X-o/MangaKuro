@@ -18,6 +18,7 @@ try:
 except Exception:
     pass
 
+import asyncio
 import shutil
 import tempfile
 import hashlib
@@ -40,7 +41,7 @@ from app.services.session_manager import session_manager
 app = FastAPI(
     title="MangaKuro • ULTIMATE COMIC & MANGA SUITE",
     description="Gestor web ultra-rápido de CBZ, CBR, PDF y EPUB para Manga, Cómics y Webtoons listo para Komga.",
-    version="1.0.0"
+    version="1.0.2"
 )
 
 # Enable CORS for local network and dev mode
@@ -232,6 +233,11 @@ class ServerImportRequest(BaseModel):
     item_type: Optional[str] = "auto"
     custom_series: Optional[str] = None
     custom_number: Optional[str] = None
+
+class ApplyOnlineCoverRequest(BaseModel):
+    image_url: str
+    mode: str = "insert_first" # "insert_first" or "replace_first"
+    custom_name: Optional[str] = "Portada Oficial.jpg"
 
 # --- Authentication Endpoints ---
 
@@ -847,6 +853,46 @@ async def batch_update_metadata_endpoint(req: BatchMetadataRequest):
         )
         return {"updated_count": len(updated), "sessions": updated}
     except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+# --- Online Manga & Comic Search & Covers ---
+
+@app.get("/api/search/online")
+async def search_online_endpoint(query: str, source: str = "auto"):
+    """Searches online databases (MangaDex, AniList, OpenLibrary) for volume/chapter counts, covers, and metadata."""
+    from app.services.online_search import unified_online_search
+    try:
+        results = await asyncio.to_thread(unified_online_search, query=query, source=source)
+        return {"results": results, "count": len(results)}
+    except Exception as e:
+        logger.error(f"Error in online search: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/search/mangadex/{manga_id}/covers")
+async def get_mangadex_covers_endpoint(manga_id: str):
+    """Fetches volume-specific covers for a MangaDex manga ID."""
+    from app.services.online_search import get_mangadex_volume_covers
+    try:
+        covers = await asyncio.to_thread(get_mangadex_volume_covers, manga_id)
+        return {"covers": covers, "count": len(covers)}
+    except Exception as e:
+        logger.error(f"Error in mangadex covers: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/session/{session_id}/apply-online-cover")
+async def apply_online_cover_endpoint(session_id: str, req: ApplyOnlineCoverRequest):
+    """Downloads an external cover image and sets it as session cover (inserting as page #1 or replacing page #1)."""
+    try:
+        manifest = await asyncio.to_thread(
+            session_manager.apply_online_cover,
+            session_id=session_id,
+            image_url=req.image_url,
+            mode=req.mode,
+            custom_name=req.custom_name
+        )
+        return manifest
+    except Exception as e:
+        logger.error(f"Error applying online cover to session {session_id}: {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
 # --- Export & Komga Integration ---

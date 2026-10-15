@@ -73,6 +73,7 @@ import { DonationBanner } from './components/DonationBanner';
 import { ImageAnalysisModal } from './components/ImageAnalysisModal';
 import { ExportGroupModal } from './components/ExportGroupModal';
 import { DeleteGroupModal } from './components/DeleteGroupModal';
+import { OnlineSearchModal } from './components/OnlineSearchModal';
 import { cleanSeriesDisplayName, extractSortNumber, isSessionTomo, isSessionChapter, SeriesGroup } from './utils/seriesGrouping';
 import { useStorageSanitizer } from './hooks/useStorageSanitizer';
 import { useTranslation } from './i18n';
@@ -195,6 +196,7 @@ export const App: React.FC = () => {
   const [cloneInitialMetadata, setCloneInitialMetadata] = useState<ComicInfo | null>(null);
   const [isDonationOpen, setIsDonationOpen] = useState(false);
   const [isImageAnalysisOpen, setIsImageAnalysisOpen] = useState(false);
+  const [isOnlineSearchOpen, setIsOnlineSearchOpen] = useState(false);
   const [stagingTab, setStagingTab] = useState<'all' | 'tomos' | 'chapters'>('all');
   const [dashboardSearch, setDashboardSearch] = useState('');
   const [uploadDefaultSeries, setUploadDefaultSeries] = useState<string | null>(null);
@@ -893,6 +895,11 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleOnlineCoverApplied = (updatedManifest: SessionManifest) => {
+    setSession(updatedManifest);
+    loadSessions();
+  };
+
   const handleBatchSaveMetadata = async (sessionIds: string[], newMeta: ComicInfo) => {
     setIsSaving(true);
     try {
@@ -1116,6 +1123,7 @@ export const App: React.FC = () => {
         onToggleMonitor={toggleMonitor}
         onOpenDonation={() => setIsDonationOpen(true)}
         onOpenImageAnalysis={() => setIsImageAnalysisOpen(true)}
+        onOpenOnlineSearch={() => setIsOnlineSearchOpen(true)}
       />
 
       {/* Main Content Area with Sidebar */}
@@ -1568,6 +1576,7 @@ export const App: React.FC = () => {
           }}
           onSave={handleSaveMetadata}
           onBatchSave={handleBatchSaveMetadata}
+          onOpenOnlineSearch={() => setIsOnlineSearchOpen(true)}
         />
       )}
 
@@ -1866,6 +1875,15 @@ export const App: React.FC = () => {
           }}
         />
       )}
+      {/* Online Search Modal (Metadata, Tomos/Capítulos counts & Covers) */}
+      <OnlineSearchModal
+        isOpen={isOnlineSearchOpen}
+        onClose={() => setIsOnlineSearchOpen(false)}
+        session={session}
+        onUpdateMetadata={handleSaveMetadata}
+        onCoverApplied={handleOnlineCoverApplied}
+      />
+
       {/* Real-time System Performance Monitor Floating Widget */}
       <SystemMonitorWidget
         isOpen={isMonitorOpen}
