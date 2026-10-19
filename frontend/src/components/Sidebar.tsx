@@ -1100,10 +1100,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // Online publication summaries cache & background prefetcher
   const [onlineSummaries, setOnlineSummaries] = useState<Record<string, SeriesOnlineSummary>>({});
   const [loadingSummaries, setLoadingSummaries] = useState<Record<string, boolean>>({});
+  const fetchedSummariesRef = useRef<Set<string>>(new Set());
 
   const fetchSummaryForGroup = useCallback(async (seriesName: string) => {
     const key = seriesName.trim().toLowerCase();
-    if (!key || onlineSummaries[key] || loadingSummaries[key]) return;
+    if (!key || fetchedSummariesRef.current.has(key)) return;
+    fetchedSummariesRef.current.add(key);
     setLoadingSummaries((prev) => ({ ...prev, [key]: true }));
     try {
       const summary = await fetchSeriesOnlineSummary(seriesName);
@@ -1113,12 +1115,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
     } finally {
       setLoadingSummaries((prev) => ({ ...prev, [key]: false }));
     }
-  }, [onlineSummaries, loadingSummaries]);
+  }, []);
 
   useEffect(() => {
     seriesGroups.forEach((g) => {
       if (g.name && g.name.trim()) {
-        fetchSummaryForGroup(g.name);
+        const key = g.name.trim().toLowerCase();
+        if (!fetchedSummariesRef.current.has(key)) {
+          fetchSummaryForGroup(g.name);
+        }
       }
     });
   }, [seriesGroups, fetchSummaryForGroup]);

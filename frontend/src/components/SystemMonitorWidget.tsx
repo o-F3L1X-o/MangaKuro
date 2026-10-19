@@ -85,12 +85,12 @@ export const SystemMonitorWidget: React.FC<SystemMonitorWidgetProps> = ({
         if (timerRef.current) clearInterval(timerRef.current);
       } else {
         loadStats();
-        timerRef.current = setInterval(loadStats, 5000);
+        timerRef.current = setInterval(loadStats, 10000);
       }
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
-    timerRef.current = setInterval(loadStats, 5000);
+    timerRef.current = setInterval(loadStats, 10000);
 
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);

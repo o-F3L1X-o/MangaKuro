@@ -269,11 +269,11 @@ class SessionManager:
         self._manifest_cache.clear()
         return count
 
-    def _scan_disk_and_orphans(self) -> Tuple[Dict[str, Any], Dict[str, Any], int, List[Tuple[Path, str, int]]]:
+    def _scan_disk_and_orphans(self, deep_scan: bool = False) -> Tuple[Dict[str, Any], Dict[str, Any], int, List[Tuple[Path, str, int]]]:
         """
         Scans staging directory and calculates:
         - Total staging size and drive capacity
-        - Real orphan items: broken/empty sessions AND unreferenced image/thumbnail files inside active sessions.
+        - Real orphan items: broken/empty sessions AND (if deep_scan=True) unreferenced image/thumbnail files inside active sessions.
         Returns: (disk_stats, orphans_stats, active_sessions, orphaned_items)
         """
         orphaned_items: List[Tuple[Path, str, int]] = []
@@ -307,64 +307,69 @@ class SessionManager:
                 if is_broken_session:
                     # Entire directory is orphaned
                     dir_bytes = 0
-                    try:
-                        for f in sdir.rglob("*"):
-                            if f.is_file():
-                                try:
-                                    fsize = f.stat().st_size
-                                    dir_bytes += fsize
-                                    staging_bytes += fsize
-                                except Exception:
-                                    pass
-                        orphaned_items.append((sdir, "dir", dir_bytes))
-                    except Exception:
-                        pass
+                    if deep_scan:
+                        try:
+                            for f in sdir.rglob("*"):
+                                if f.is_file():
+                                    try:
+                                        fsize = f.stat().st_size
+                                        dir_bytes += fsize
+                                        staging_bytes += fsize
+                                    except Exception:
+                                        pass
+                        except Exception:
+                            pass
+                    orphaned_items.append((sdir, "dir", dir_bytes))
                 else:
-                    # Valid session: check for unreferenced images & thumbnails
-                    referenced_files = {
-                        "manifest.json",
-                        "comicinfo.xml",
-                        "ComicInfo.xml"
-                    }
+                    # Valid session: estimate staging bytes from manifest pages (~450KB/page) for ultra-fast response
                     if manifest_pages:
-                        for p in manifest_pages:
-                            fn = p.get("filename")
-                            if fn:
-                                referenced_files.add(fn)
-                                referenced_files.add(fn.lower())
-                                referenced_files.add(f"images/{fn}")
-                                referenced_files.add(f"images\\{fn}")
-                            th = p.get("thumb_filename")
-                            if th:
-                                referenced_files.add(th)
-                                referenced_files.add(th.lower())
-                                referenced_files.add(f"thumbnails/{th}")
-                                referenced_files.add(f"thumbnails\\{th}")
+                        staging_bytes += len(manifest_pages) * 450 * 1024
 
-                    try:
-                        for f in sdir.rglob("*"):
-                            if f.is_file():
-                                try:
-                                    fsize = f.stat().st_size
-                                    staging_bytes += fsize
-                                    rel = str(f.relative_to(sdir)).replace("\\", "/")
-                                    fname = f.name
-                                    fname_lower = fname.lower()
-                                    if (
-                                        fname in referenced_files or
-                                        fname_lower in referenced_files or
-                                        rel in referenced_files or
-                                        fname_lower == "manifest.json" or
-                                        fname_lower == "comicinfo.xml" or
-                                        fname.startswith("backup_") or
-                                        fname.startswith(".cover_")
-                                    ):
-                                        continue
-                                    orphaned_items.append((f, "file", fsize))
-                                except Exception:
-                                    pass
-                    except Exception:
-                        pass
+                    # Only perform deep recursive scan over files when explicitly requested by cleanup action
+                    if deep_scan:
+                        referenced_files = {
+                            "manifest.json",
+                            "comicinfo.xml",
+                            "ComicInfo.xml"
+                        }
+                        if manifest_pages:
+                            for p in manifest_pages:
+                                fn = p.get("filename")
+                                if fn:
+                                    referenced_files.add(fn)
+                                    referenced_files.add(fn.lower())
+                                    referenced_files.add(f"images/{fn}")
+                                    referenced_files.add(f"images\\{fn}")
+                                th = p.get("thumb_filename")
+                                if th:
+                                    referenced_files.add(th)
+                                    referenced_files.add(th.lower())
+                                    referenced_files.add(f"thumbnails/{th}")
+                                    referenced_files.add(f"thumbnails\\{th}")
+
+                        try:
+                            for f in sdir.rglob("*"):
+                                if f.is_file():
+                                    try:
+                                        fsize = f.stat().st_size
+                                        rel = str(f.relative_to(sdir)).replace("\\", "/")
+                                        fname = f.name
+                                        fname_lower = fname.lower()
+                                        if (
+                                            fname in referenced_files or
+                                            fname_lower in referenced_files or
+                                            rel in referenced_files or
+                                            fname_lower == "manifest.json" or
+                                            fname_lower == "comicinfo.xml" or
+                                            fname.startswith("backup_") or
+                                            fname.startswith(".cover_")
+                                        ):
+                                            continue
+                                        orphaned_items.append((f, "file", fsize))
+                                    except Exception:
+                                        pass
+                        except Exception:
+                            pass
 
         drive_total_gb = 0.0
         drive_free_gb = 0.0
@@ -397,7 +402,7 @@ class SessionManager:
 
     def cleanup_orphaned_sessions(self) -> Dict[str, Any]:
         """Cleans up empty/corrupted sessions AND unreferenced image files inside active sessions."""
-        _, _, _, orphaned_items = self._scan_disk_and_orphans()
+        _, _, _, orphaned_items = self._scan_disk_and_orphans(deep_scan=True)
         cleaned_count = 0
         freed_bytes = 0
 
