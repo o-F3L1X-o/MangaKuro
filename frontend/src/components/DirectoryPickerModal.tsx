@@ -231,7 +231,7 @@ export const DirectoryPickerModal: React.FC<DirectoryPickerModalProps> = ({
                     <div className="flex items-center gap-1.5 shrink-0 ml-2">
                       {dir.has_staging && (
                         <span className="px-1.5 py-0.5 rounded-md text-[10px] font-bold bg-emerald-50 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">
-                          Staging
+                          Preparación
                         </span>
                       )}
                       {dir.comic_count !== undefined && dir.comic_count > 0 && (

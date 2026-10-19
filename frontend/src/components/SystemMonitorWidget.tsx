@@ -156,7 +156,7 @@ export const SystemMonitorWidget: React.FC<SystemMonitorWidgetProps> = ({
 
         {/* Disk */}
         <span className="text-[11px] text-slate-300">
-          Staging: <span className="font-bold text-indigo-300">{stagingGb > 0 ? `${stagingGb}G` : `${stagingMb}M`}</span>
+          {t('systemMonitor.tempShort') || 'En Prep:'} <span className="font-bold text-indigo-300">{stagingGb > 0 ? `${stagingGb}G` : `${stagingMb}M`}</span>
         </span>
 
         {orphansCount > 0 && (

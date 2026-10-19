@@ -337,7 +337,7 @@ const SortableSessionItemComponent: React.FC<SortableSessionItemProps> = ({
                 onConfirmVerification?.(item.session_id);
               }}
               className="px-2 py-0.5 rounded bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-[9px] flex items-center gap-1 transition shadow-xs cursor-pointer"
-              title="Confirmar OK en Komga y eliminar copia de staging para liberar espacio"
+              title="Confirmar OK en Komga y eliminar copia temporal para liberar espacio"
             >
               <Check className="w-2.5 h-2.5" />
               <span>Confirmar OK</span>
@@ -350,7 +350,7 @@ const SortableSessionItemComponent: React.FC<SortableSessionItemProps> = ({
                   onRevertOverwrite?.(item.session_id);
                 }}
                 className="px-1.5 py-0.5 rounded bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-800 font-bold text-[9px] flex items-center gap-1 transition cursor-pointer"
-                title="Restaurar el archivo original desde la copia de seguridad de staging"
+                title="Restaurar el archivo original desde la copia temporal de seguridad"
               >
                 <RotateCcw className="w-2.5 h-2.5" />
                 <span>Revertir</span>
@@ -1733,7 +1733,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   type="button"
                   onClick={onConfirmAllPendingVerification}
                   className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-bold shadow-sm transition flex items-center gap-1 shrink-0 active:scale-95 cursor-pointer"
-                  title="Confirmar todos y liberar copias de staging"
+                  title="Confirmar todos y liberar copias temporales"
                 >
                   <CheckCircle2 className="w-3 h-3" />
                   <span>Confirmar todos ({pendingVerificationSessions.length})</span>

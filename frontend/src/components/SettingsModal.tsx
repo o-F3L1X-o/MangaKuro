@@ -427,7 +427,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       <DirectoryPickerModal
         isOpen={isPickerOpen}
         initialPath={formData.staging_directory}
-        title={t('settings.stagingPickerTitle') || 'Explorar Carpeta de Staging'}
+        title={t('settings.stagingPickerTitle') || 'Explorar Carpeta de Preparación'}
         onSelect={(path) => {
           setFormData({ ...formData, staging_directory: path });
         }}

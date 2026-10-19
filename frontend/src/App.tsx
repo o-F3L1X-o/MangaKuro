@@ -14,7 +14,10 @@ import {
   Search,
   X,
   ShieldCheck,
-  AlertCircle
+  AlertCircle,
+  Plus,
+  Globe,
+  Trash2
 } from 'lucide-react';
 import { SessionManifest, ComicInfo, AppSettings, PageItem, ComicSessionSummary } from './types';
 import { 
@@ -649,7 +652,7 @@ export const App: React.FC = () => {
 
   const handleDeleteSession = async (sessionId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!window.confirm('¿Seguro que deseas eliminar esta sesión de staging? Se borrarán sus archivos temporales.')) return;
+    if (!window.confirm(t('notifications.deleteSessionConfirm') || '¿Seguro que deseas eliminar esta sesión de trabajo? Se borrarán sus archivos temporales.')) return;
     try {
       await cancelSession(sessionId);
       if (session?.session_id === sessionId) {
@@ -705,7 +708,7 @@ export const App: React.FC = () => {
   const handleConfirmAllPendingVerification = async () => {
     const pending = sessionsList.filter((s) => s.verification_status === 'pending_verification');
     if (pending.length === 0) return;
-    if (!window.confirm(`¿Confirmar que los ${pending.length} archivos están correctos en Komga? Esto eliminará sus copias de seguridad de staging para liberar espacio en disco.`)) {
+    if (!window.confirm(`¿Confirmar que los ${pending.length} archivos están correctos en Komga? Esto eliminará sus copias de seguridad temporales para liberar espacio en disco.`)) {
       return;
     }
     try {
@@ -722,7 +725,7 @@ export const App: React.FC = () => {
   };
 
   const handleRevertOverwrite = async (sessionId: string) => {
-    if (!window.confirm('¿Seguro que deseas restaurar el archivo original desde la copia de seguridad de staging? Se sobreescribirá el archivo de destino con el respaldo intacto.')) {
+    if (!window.confirm('¿Seguro que deseas restaurar el archivo original desde la copia de seguridad temporal? Se sobreescribirá el archivo de destino con el respaldo intacto.')) {
       return;
     }
     try {
@@ -1314,230 +1317,348 @@ export const App: React.FC = () => {
               />
             </div>
           ) : (
-            /* Empty State / Welcome Hero & Full-Width Staging Catalog */
-            <div className="py-4 flex flex-col items-center justify-center text-center px-4 sm:px-6 md:px-8 w-full max-w-7xl mx-auto">
-              <div className="flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-5 mb-2">
-                <img
-                  src="/logo-icon.png?v=2"
-                  alt="MangaKuro"
-                  className="h-20 sm:h-24 w-auto object-contain drop-shadow-xl select-none shrink-0"
-                />
-                <div className="flex flex-col items-center sm:items-start justify-center">
-                  <h1 className="text-3xl sm:text-5xl font-black tracking-tight leading-none drop-shadow-sm">
-                    <span className="text-slate-900 dark:text-white">Manga</span>
-                    <span className="text-indigo-600 dark:text-[#786eff]">Kuro</span>
-                  </h1>
-                  <p className="text-[11px] sm:text-sm font-bold tracking-[0.18em] uppercase text-slate-600 dark:text-[#8ea4c8] mt-1.5 leading-none">
-                    ULTIMATE COMIC &amp; MANGA SUITE
-                  </p>
-                </div>
-              </div>
-              <p className="text-slate-600 dark:text-slate-400 text-xs sm:text-sm max-w-xl mt-2 leading-relaxed">
-                {t('welcome.heroDescription')}
-              </p>
+            /* Main Workspace: Full Prominence Hero Catalog when sessions exist, or Welcome Onboarding when 0 sessions */
+            sessionsList.length > 0 ? (() => {
+              const tomos = sessionsList.filter((s) => isSessionTomo(s));
+              const chapters = sessionsList.filter((s) => isSessionChapter(s));
+              const totalPages = sessionsList.reduce((acc, s) => acc + (s.page_count || 0), 0);
+              const tabList = stagingTab === 'tomos' 
+                ? tomos 
+                : stagingTab === 'chapters' 
+                  ? chapters 
+                  : sessionsList;
+              const activeList = tabList.filter((item) => {
+                if (!dashboardSearch.trim()) return true;
+                const q = dashboardSearch.toLowerCase();
+                const seriesName = (item.series || item.original_filename || '').toLowerCase();
+                const title = (item.title || '').toLowerCase();
+                const num = (item.number || '').toLowerCase();
+                return seriesName.includes(q) || title.includes(q) || num.includes(q);
+              });
 
-              {/* Full-width Sessions in Staging Catalog */}
-              {sessionsList.length > 0 ? (() => {
-                const tomos = sessionsList.filter((s) => isSessionTomo(s));
-                const chapters = sessionsList.filter((s) => isSessionChapter(s));
-                const tabList = stagingTab === 'tomos' 
-                  ? tomos 
-                  : stagingTab === 'chapters' 
-                    ? chapters 
-                    : sessionsList;
-                const activeList = tabList.filter((item) => {
-                  if (!dashboardSearch.trim()) return true;
-                  const q = dashboardSearch.toLowerCase();
-                  const seriesName = (item.series || item.original_filename || '').toLowerCase();
-                  const title = (item.title || '').toLowerCase();
-                  const num = (item.number || '').toLowerCase();
-                  return seriesName.includes(q) || title.includes(q) || num.includes(q);
-                });
+              return (
+                <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+                  {/* Hero Dashboard Header Banner */}
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-5 p-5 sm:p-6 rounded-3xl bg-white dark:bg-comic-900/90 border border-slate-200 dark:border-comic-800 shadow-xl relative overflow-hidden">
+                    <div className="absolute -right-20 -top-20 w-72 h-72 bg-indigo-500/10 dark:bg-indigo-500/15 rounded-full blur-3xl pointer-events-none" />
+                    <div className="absolute right-40 -bottom-20 w-60 h-60 bg-purple-500/10 dark:bg-purple-500/10 rounded-full blur-3xl pointer-events-none" />
 
-                return (
-                  <div className="w-full mt-6 p-4 sm:p-5 rounded-2xl bg-white dark:bg-comic-900/90 border border-slate-200 dark:border-comic-800 shadow-xl text-left">
-                    {/* Catalog Header with Inline Search and Tabs */}
-                    <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 mb-4 pb-3 border-b border-slate-200 dark:border-comic-800">
-                      <div>
-                        <h3 className="text-xs sm:text-sm font-bold uppercase tracking-wider text-slate-900 dark:text-white flex items-center gap-2">
-                          <Library className="w-4 h-4 text-indigo-500 dark:text-indigo-400" />
-                          <span>{t('welcome.stagingReadyTitle', { count: sessionsList.length })}</span>
-                        </h3>
-                        <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                          {tomos.length > 0
-                            ? t('welcome.stagingTomosCount', { tomos: tomos.length, chapters: chapters.length })
-                            : t('welcome.stagingClickToOpen')}
-                        </p>
+                    <div className="flex items-start sm:items-center gap-4 relative z-10">
+                      <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-indigo-600 to-indigo-400 text-white flex items-center justify-center shadow-lg shadow-indigo-500/25 shrink-0">
+                        <Library className="w-7 h-7" />
                       </div>
-
-                      {/* Right Toolbar: Quick Search + Filter Tabs */}
-                      <div className="flex flex-wrap items-center gap-2.5">
-                        {/* Inline Search Bar */}
-                        <div className="relative w-full sm:w-56 md:w-64">
-                          <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                          <input
-                            type="text"
-                            value={dashboardSearch}
-                            onChange={(e) => setDashboardSearch(e.target.value)}
-                            placeholder={t('welcome.searchPlaceholder')}
-                            className="w-full pl-8 pr-7 py-1 text-xs rounded-xl bg-slate-50 dark:bg-comic-950 border border-slate-300 dark:border-comic-700/80 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                          />
-                          {dashboardSearch && (
-                            <button
-                              type="button"
-                              onClick={() => setDashboardSearch('')}
-                              className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-white"
-                              title={t('welcome.clearSearch')}
-                            >
-                              <X className="w-3 h-3" />
-                            </button>
-                          )}
+                      <div>
+                        <div className="flex items-center gap-2.5 flex-wrap">
+                          <h1 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white tracking-tight">
+                            {t('welcome.stagingReadyTitle', { count: sessionsList.length })}
+                          </h1>
+                          <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-100 dark:bg-indigo-950/80 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
+                            {sessionsList.length} {t('common.works')}
+                          </span>
                         </div>
-
-                        {/* Filter Tabs */}
-                        <div className="flex items-center gap-1 p-1 bg-slate-100 dark:bg-comic-950/80 rounded-xl border border-slate-200 dark:border-comic-800/80 self-start sm:self-auto">
-                          <button
-                            type="button"
-                            onClick={() => setStagingTab('all')}
-                            className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition ${
-                              stagingTab === 'all'
-                                ? 'bg-indigo-600 text-white shadow'
-                                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                            }`}
-                          >
-                            {t('welcome.filterAll', { count: sessionsList.length })}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setStagingTab('tomos')}
-                            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition ${
-                              stagingTab === 'tomos'
-                                ? 'bg-amber-600 text-white shadow'
-                                : 'text-amber-700 dark:text-amber-400/90 hover:text-amber-800 dark:hover:text-amber-300'
-                            }`}
-                          >
-                            <BookOpen className="w-3 h-3" />
-                            <span>{t('welcome.filterTomos', { count: tomos.length })}</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setStagingTab('chapters')}
-                            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition ${
-                              stagingTab === 'chapters'
-                                ? 'bg-purple-600 text-white shadow'
-                                : 'text-purple-700 dark:text-purple-400/90 hover:text-purple-800 dark:hover:text-purple-300'
-                            }`}
-                          >
-                            <Bookmark className="w-3 h-3" />
-                            <span>{t('welcome.filterChapters', { count: chapters.length })}</span>
-                          </button>
-                        </div>
+                        <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-1 max-w-2xl leading-relaxed">
+                          {t('welcome.stagingTomosCount', { tomos: tomos.length, chapters: chapters.length })} · {totalPages.toLocaleString()} {t('common.pages')} en total. {t('welcome.stagingClickToOpen')}
+                        </p>
                       </div>
                     </div>
 
-                    {/* Catalog Grid */}
-                    {activeList.length === 0 ? (
-                      <div className="py-12 text-center text-slate-500 text-xs">
-                        <p>{t('welcome.noSearchResults')}</p>
-                        {dashboardSearch && (
-                          <button
-                            type="button"
-                            onClick={() => setDashboardSearch('')}
-                            className="mt-2 text-indigo-500 hover:underline font-semibold"
-                          >
-                            {t('welcome.clearSearch')}
-                          </button>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3.5 max-h-[55vh] overflow-y-auto pr-1.5 custom-scrollbar">
-                        {activeList.map((item) => {
-                          const isTomo = isSessionTomo(item);
-                          return (
-                            <div
-                              key={item.session_id}
-                              onClick={() => handleSelectSession(item.session_id)}
-                              className={`group p-2.5 rounded-xl bg-slate-50 dark:bg-comic-950/90 border cursor-pointer transition flex flex-col items-center text-center shadow-xs hover:shadow-md relative hover:scale-[1.02] ${
-                                isTomo 
-                                  ? 'border-amber-400/40 dark:border-amber-600/30 hover:border-amber-500 hover:shadow-amber-500/10' 
-                                  : 'border-slate-200 dark:border-comic-800 hover:border-indigo-500 hover:shadow-indigo-500/10'
-                              }`}
-                            >
-                              <div className="w-full aspect-[2/3] bg-slate-100 dark:bg-comic-900 rounded-lg overflow-hidden border border-slate-300 dark:border-slate-700/60 mb-2 flex items-center justify-center relative">
-                                {item.cover_thumb ? (
-                                  <img
-                                    src={getThumbUrl(item.session_id, item.cover_thumb)}
-                                    alt={item.series}
-                                    className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
-                                    loading="lazy"
-                                  />
-                                ) : (
-                                  <BookOpen className="w-7 h-7 text-slate-400 dark:text-slate-600" />
-                                )}
-                                <span className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded bg-black/80 backdrop-blur-sm text-[10px] text-white font-mono font-medium">
-                                  {item.page_count} {t('common.pages')}
-                                </span>
-                                {isTomo && (
-                                  <span className="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-amber-500 text-slate-950 font-bold text-[9px] uppercase tracking-wider shadow">
-                                    {t('common.tomo')} {item.volume ? `#${item.volume}` : (item.number ? `#${item.number}` : '')}
-                                  </span>
-                                )}
-                              </div>
+                    {/* Action Buttons */}
+                    <div className="flex items-center gap-2.5 flex-wrap sm:flex-nowrap relative z-10 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setIsUploadOpen(true)}
+                        className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white text-xs font-bold shadow-md shadow-indigo-600/20 hover:shadow-indigo-600/30 transition cursor-pointer"
+                      >
+                        <Plus className="w-4 h-4" />
+                        <span>{t('header.uploadComic')}</span>
+                      </button>
 
-                              <span className="text-xs font-bold text-slate-800 dark:text-white group-hover:text-indigo-600 dark:group-hover:text-indigo-300 truncate w-full" title={item.series || item.original_filename}>
-                                {item.series || item.original_filename}
-                              </span>
-                              
-                              <div className="flex items-center gap-1.5 mt-1 text-[11px] truncate max-w-full">
-                                {isTomo ? (
-                                  <span className="text-amber-700 dark:text-amber-400 font-medium truncate" title={item.title || undefined}>
-                                    {(() => {
-                                      const hasMeaningfulTitle = Boolean(
-                                        item.title &&
-                                        item.title.trim().toLowerCase() !== (item.series || '').trim().toLowerCase() &&
-                                        !/^(?:cap|cap[ií]tulo|ch|chapter)\.?\s*\d+/i.test(item.title.trim())
-                                      );
-                                      const volNum = item.volume ? `#${item.volume}` : (item.number ? `#${item.number}` : '');
-                                      const tomoLabel = volNum ? `${t('common.tomo')} ${volNum}` : t('common.tomo');
-
-                                      if (hasMeaningfulTitle) {
-                                        return volNum ? `${tomoLabel} · ${item.title}` : item.title;
-                                      }
-                                      return tomoLabel;
-                                    })()}
-                                  </span>
-                                ) : (
-                                  <span className="text-indigo-600 dark:text-indigo-300 font-mono truncate" title={item.title || undefined}>
-                                    {(() => {
-                                      const hasMeaningfulTitle = Boolean(
-                                        item.title &&
-                                        item.title.trim().toLowerCase() !== (item.series || '').trim().toLowerCase()
-                                      );
-                                      const capNum = item.number ? `#${item.number}` : '';
-                                      const capLabel = capNum ? `${t('common.chapter')} ${capNum}` : (item.title || t('common.chapter'));
-
-                                      if (hasMeaningfulTitle && capNum) {
-                                        return `${capLabel} · ${item.title}`;
-                                      }
-                                      return capLabel;
-                                    })()}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
+                      <button
+                        type="button"
+                        onClick={() => setIsOnlineSearchOpen(true)}
+                        className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-comic-800 dark:hover:bg-comic-700 border border-slate-300 dark:border-comic-700 text-slate-800 dark:text-slate-200 text-xs font-semibold shadow-xs transition cursor-pointer"
+                        title="Buscar metadatos e información online"
+                      >
+                        <Globe className="w-4 h-4 text-indigo-500 dark:text-indigo-400" />
+                        <span>{t('onlineSearch.title') || 'Buscar Online'}</span>
+                      </button>
+                    </div>
                   </div>
-                );
-              })() : (
-                <div className="mt-8 p-6 rounded-2xl bg-slate-50 dark:bg-comic-900/40 border border-slate-200 dark:border-comic-800/80 max-w-lg text-center">
-                  <h3 className="text-sm font-bold text-slate-800 dark:text-white">{t('welcome.emptyTitle')}</h3>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1.5">{t('welcome.emptyDesc')}</p>
+
+                  {/* Filter and Search Bar */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-2xl bg-white dark:bg-comic-900/80 border border-slate-200 dark:border-comic-800 shadow-sm">
+                    {/* Filter Tabs */}
+                    <div className="flex items-center gap-1.5 p-1 bg-slate-100 dark:bg-comic-950/80 rounded-xl border border-slate-200 dark:border-comic-800/80 self-start sm:self-auto overflow-x-auto max-w-full">
+                      <button
+                        type="button"
+                        onClick={() => setStagingTab('all')}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                          stagingTab === 'all'
+                            ? 'bg-indigo-600 text-white shadow-sm'
+                            : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                        }`}
+                      >
+                        <Library className="w-3.5 h-3.5" />
+                        <span>{t('welcome.filterAll', { count: sessionsList.length })}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setStagingTab('tomos')}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                          stagingTab === 'tomos'
+                            ? 'bg-amber-600 text-white shadow-sm'
+                            : 'text-amber-700 dark:text-amber-400/90 hover:text-amber-800 dark:hover:text-amber-300'
+                        }`}
+                      >
+                        <BookOpen className="w-3.5 h-3.5" />
+                        <span>{t('welcome.filterTomos', { count: tomos.length })}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setStagingTab('chapters')}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                          stagingTab === 'chapters'
+                            ? 'bg-purple-600 text-white shadow-sm'
+                            : 'text-purple-700 dark:text-purple-400/90 hover:text-purple-800 dark:hover:text-purple-300'
+                        }`}
+                      >
+                        <Bookmark className="w-3.5 h-3.5" />
+                        <span>{t('welcome.filterChapters', { count: chapters.length })}</span>
+                      </button>
+                    </div>
+
+                    {/* Live Search Input */}
+                    <div className="relative w-full sm:w-72 md:w-80">
+                      <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <input
+                        type="text"
+                        value={dashboardSearch}
+                        onChange={(e) => setDashboardSearch(e.target.value)}
+                        placeholder={t('welcome.searchPlaceholder')}
+                        className="w-full pl-9 pr-8 py-1.5 text-xs rounded-xl bg-slate-50 dark:bg-comic-950 border border-slate-300 dark:border-comic-700 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
+                      />
+                      {dashboardSearch && (
+                        <button
+                          type="button"
+                          onClick={() => setDashboardSearch('')}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-white p-0.5 rounded cursor-pointer"
+                          title={t('welcome.clearSearch')}
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Catalog Grid (Full page height, no max-h-[55vh] constraints!) */}
+                  {activeList.length === 0 ? (
+                    <div className="py-16 text-center rounded-2xl bg-white dark:bg-comic-900/60 border border-slate-200 dark:border-comic-800">
+                      <Library className="w-10 h-10 text-slate-400 dark:text-slate-600 mx-auto mb-2 opacity-50" />
+                      <p className="text-sm font-semibold text-slate-600 dark:text-slate-400">{t('welcome.noSearchResults')}</p>
+                      {dashboardSearch && (
+                        <button
+                          type="button"
+                          onClick={() => setDashboardSearch('')}
+                          className="mt-3 text-xs text-indigo-500 hover:underline font-bold cursor-pointer"
+                        >
+                          {t('welcome.clearSearch')}
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+                      {activeList.map((item) => {
+                        const isTomo = isSessionTomo(item);
+                        return (
+                          <div
+                            key={item.session_id}
+                            onClick={() => handleSelectSession(item.session_id)}
+                            className={`group rounded-2xl bg-white dark:bg-comic-900/90 border p-3 cursor-pointer transition-all duration-200 flex flex-col items-center text-center shadow-sm hover:shadow-xl relative hover:-translate-y-1 ${
+                              isTomo 
+                                ? 'border-amber-400/40 dark:border-amber-600/30 hover:border-amber-500 hover:shadow-amber-500/10' 
+                                : 'border-slate-200 dark:border-comic-800 hover:border-indigo-500 hover:shadow-indigo-500/10'
+                            }`}
+                          >
+                            {/* Cover Container */}
+                            <div className="w-full aspect-[2/3] bg-slate-100 dark:bg-comic-950 rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700/60 mb-2.5 flex items-center justify-center relative shadow-inner">
+                              {item.cover_thumb ? (
+                                <img
+                                  src={getThumbUrl(item.session_id, item.cover_thumb)}
+                                  alt={item.series}
+                                  className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
+                                  loading="lazy"
+                                />
+                              ) : (
+                                <BookOpen className="w-8 h-8 text-slate-400 dark:text-slate-600" />
+                              )}
+                              
+                              {/* Page Count Badge */}
+                              <span className="absolute bottom-1.5 right-1.5 px-2 py-0.5 rounded-md bg-black/75 backdrop-blur-md text-[10px] text-white font-mono font-medium shadow-sm z-10">
+                                {item.page_count} {t('common.pages')}
+                              </span>
+
+                              {/* Tomo or Chapter Badge */}
+                              {isTomo ? (
+                                <span className="absolute top-1.5 left-1.5 px-2 py-0.5 rounded-md bg-amber-500 text-slate-950 font-black text-[9px] uppercase tracking-wider shadow z-10">
+                                  {t('common.tomo')} {item.volume ? `#${item.volume}` : (item.number ? `#${item.number}` : '')}
+                                </span>
+                              ) : (
+                                <span className="absolute top-1.5 left-1.5 px-2 py-0.5 rounded-md bg-purple-600 text-white font-black text-[9px] uppercase tracking-wider shadow z-10">
+                                  {t('common.chapter')} {item.number ? `#${item.number}` : ''}
+                                </span>
+                              )}
+
+                              {/* Hover Overlay Action */}
+                              <div className="absolute inset-0 bg-indigo-950/60 backdrop-blur-[2px] opacity-0 group-hover:opacity-100 transition duration-200 flex items-center justify-center p-3 z-20">
+                                <span className="px-3 py-1.5 rounded-xl bg-indigo-600 text-white text-xs font-bold shadow-lg flex items-center gap-1.5 transform translate-y-2 group-hover:translate-y-0 transition duration-200">
+                                  <span>{t('common.open') || 'Abrir'}</span>
+                                  <ArrowRight className="w-3.5 h-3.5" />
+                                </span>
+                              </div>
+
+                              {/* Delete Session Button */}
+                              <button
+                                type="button"
+                                onClick={(e) => handleDeleteSession(item.session_id, e)}
+                                className="absolute top-1.5 right-1.5 p-1 rounded-md bg-black/60 hover:bg-red-600 text-white opacity-0 group-hover:opacity-100 transition z-30 cursor-pointer"
+                                title={t('sidebar.deleteSessionPrompt') || 'Eliminar de preparación'}
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
+
+                            {/* Series Title */}
+                            <span 
+                              className="text-xs sm:text-sm font-bold text-slate-800 dark:text-white group-hover:text-indigo-600 dark:group-hover:text-indigo-400 truncate w-full transition" 
+                              title={item.series || item.original_filename}
+                            >
+                              {item.series || item.original_filename}
+                            </span>
+                            
+                            {/* Subtitle */}
+                            <div className="flex items-center gap-1.5 mt-1 text-[11px] truncate max-w-full">
+                              {isTomo ? (
+                                <span className="text-amber-700 dark:text-amber-400 font-medium truncate" title={item.title || undefined}>
+                                  {(() => {
+                                    const hasMeaningfulTitle = Boolean(
+                                      item.title &&
+                                      item.title.trim().toLowerCase() !== (item.series || '').trim().toLowerCase() &&
+                                      !/^(?:cap|cap[ií]tulo|ch|chapter)\.?\s*\d+/i.test(item.title.trim())
+                                    );
+                                    const volNum = item.volume ? `#${item.volume}` : (item.number ? `#${item.number}` : '');
+                                    const tomoLabel = volNum ? `${t('common.tomo')} ${volNum}` : t('common.tomo');
+
+                                    if (hasMeaningfulTitle) {
+                                      return volNum ? `${tomoLabel} · ${item.title}` : item.title;
+                                    }
+                                    return tomoLabel;
+                                  })()}
+                                </span>
+                              ) : (
+                                <span className="text-indigo-600 dark:text-indigo-300 font-mono truncate" title={item.title || undefined}>
+                                  {(() => {
+                                    const hasMeaningfulTitle = Boolean(
+                                      item.title &&
+                                      item.title.trim().toLowerCase() !== (item.series || '').trim().toLowerCase()
+                                    );
+                                    const capNum = item.number ? `#${item.number}` : '';
+                                    const capLabel = capNum ? `${t('common.chapter')} ${capNum}` : (item.title || t('common.chapter'));
+
+                                    if (hasMeaningfulTitle && capNum) {
+                                      return `${capLabel} · ${item.title}`;
+                                    }
+                                    return capLabel;
+                                  })()}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
+              );
+            })() : (
+              /* Empty State / Welcome Hero when 0 sessions exist */
+              <div className="py-12 flex flex-col items-center justify-center text-center px-4 sm:px-6 md:px-8 w-full max-w-4xl mx-auto">
+                <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-4">
+                  <img
+                    src="/logo-icon.png?v=2"
+                    alt="MangaKuro"
+                    className="h-24 sm:h-28 w-auto object-contain drop-shadow-xl select-none shrink-0"
+                  />
+                  <div className="flex flex-col items-center sm:items-start justify-center">
+                    <h1 className="text-4xl sm:text-6xl font-black tracking-tight leading-none drop-shadow-sm">
+                      <span className="text-slate-900 dark:text-white">Manga</span>
+                      <span className="text-indigo-600 dark:text-[#786eff]">Kuro</span>
+                    </h1>
+                    <p className="text-xs sm:text-sm font-bold tracking-[0.2em] uppercase text-slate-500 dark:text-[#8ea4c8] mt-2 leading-none">
+                      ULTIMATE COMIC &amp; MANGA SUITE
+                    </p>
+                  </div>
+                </div>
+                <p className="text-slate-600 dark:text-slate-400 text-sm max-w-xl mt-2 leading-relaxed">
+                  {t('welcome.heroDescription')}
+                </p>
+
+                {/* Big Call to Action Dropzone */}
+                <div 
+                  onClick={() => setIsUploadOpen(true)}
+                  className="w-full mt-8 p-10 rounded-3xl border-2 border-dashed border-indigo-300 dark:border-indigo-500/30 hover:border-indigo-500 bg-white/80 dark:bg-comic-900/50 hover:bg-indigo-50/50 dark:hover:bg-comic-900/80 transition-all duration-300 cursor-pointer flex flex-col items-center justify-center text-center group shadow-xl"
+                >
+                  <div className="w-16 h-16 rounded-2xl bg-indigo-500/10 text-indigo-500 flex items-center justify-center mb-4 group-hover:scale-110 transition duration-300">
+                    <UploadCloud className="w-8 h-8" />
+                  </div>
+                  <h3 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white">
+                    {t('welcome.emptyTitle')}
+                  </h3>
+                  <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 max-w-md mt-1.5 leading-relaxed">
+                    {t('welcome.emptyDesc')}
+                  </p>
+                  <button 
+                    type="button"
+                    className="mt-5 px-5 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white text-xs font-bold shadow-lg shadow-indigo-600/25 transition flex items-center gap-2 cursor-pointer"
+                  >
+                    <UploadCloud className="w-4 h-4" />
+                    <span>{t('header.uploadComic')}</span>
+                  </button>
+                </div>
+
+                {/* Feature Highlights */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full mt-8 text-left">
+                  <div className="p-4 rounded-2xl bg-white dark:bg-comic-900/60 border border-slate-200 dark:border-comic-800">
+                    <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400 font-bold text-xs mb-1">
+                      <Sparkles className="w-4 h-4" />
+                      <span>{t('welcome.benefit1Title')}</span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                      {t('welcome.benefit1Desc')}
+                    </p>
+                  </div>
+
+                  <div className="p-4 rounded-2xl bg-white dark:bg-comic-900/60 border border-slate-200 dark:border-comic-800">
+                    <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400 font-bold text-xs mb-1">
+                      <Layers className="w-4 h-4" />
+                      <span>{t('welcome.benefit2Title')}</span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                      {t('welcome.benefit2Desc')}
+                    </p>
+                  </div>
+
+                  <div className="p-4 rounded-2xl bg-white dark:bg-comic-900/60 border border-slate-200 dark:border-comic-800">
+                    <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400 font-bold text-xs mb-1">
+                      <HardDrive className="w-4 h-4" />
+                      <span>{t('welcome.benefit3Title')}</span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                      {t('welcome.benefit3Desc')}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )
           )}
         </main>
       </div>

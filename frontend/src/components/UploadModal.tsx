@@ -843,7 +843,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                         <span>{selectedServerFiles.size} cómic(s) seleccionados para importar</span>
                       </div>
                       <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                        Se crearán directamente en Staging copiando desde el disco del servidor sin consumir red.
+                        Se crearán directamente en el área de preparación copiando desde el disco del servidor sin consumir red.
                       </div>
                     </div>
 
@@ -1081,7 +1081,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                     </div>
                     <p className="text-[10px] text-slate-400 leading-tight">
                       {availableTomos.length === 0 
-                        ? 'No hay tomos cargados en staging.' 
+                        ? 'No hay tomos cargados en el área de preparación.' 
                         : 'Inserta las páginas al final de un Tomo ya cargado.'}
                     </p>
                   </button>

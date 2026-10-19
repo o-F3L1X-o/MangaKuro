@@ -181,7 +181,7 @@ export interface AuthStatusResult {
 
 export interface OnlineSearchResult {
   id: string;
-  provider: 'mangadex' | 'anilist' | 'mangaupdates' | 'openlibrary';
+  provider: 'mangadex' | 'anilist' | 'mangaupdates' | 'kitsu' | 'bangumi' | 'openlibrary';
   provider_label: string;
   title: string;
   title_spanish?: string;

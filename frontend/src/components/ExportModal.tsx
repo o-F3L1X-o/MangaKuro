@@ -794,7 +794,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                         Reemplaza directamente el archivo original en su ruta del NAS con esta versión editada y optimizada.
                       </p>
                       <p className="text-[10px] text-emerald-300 font-semibold leading-relaxed flex items-center gap-1 mt-1">
-                        <span>🛡️ Respaldo seguro: Se conserva una copia en staging hasta que confirmes que se ve perfecto en Komga. Podrás revertir en 1 clic si lo deseas.</span>
+                        <span>🛡️ Respaldo seguro: Se conserva una copia en el área de preparación hasta que confirmes que se ve perfecto en Komga. Podrás revertir en 1 clic si lo deseas.</span>
                       </p>
                     </div>
                   </label>

@@ -20,7 +20,7 @@ import {
   Languages
 } from 'lucide-react';
 import { ComicInfo, OnlineSearchResult, SessionManifest, VolumeCoverItem } from '../types';
-import { searchOnlineManga, fetchMangaDexVolumeCovers, applyOnlineCover } from '../api';
+import { searchOnlineManga, fetchMangaDexVolumeCovers, applyOnlineCover, translateOnlineText } from '../api';
 import { useTranslation } from '../i18n';
 
 interface OnlineSearchModalProps {
@@ -61,7 +61,7 @@ export const OnlineSearchModal: React.FC<OnlineSearchModalProps> = ({
   }, [session, defaultQuery]);
 
   const [query, setQuery] = useState('');
-  const [sourceFilter, setSourceFilter] = useState<'auto' | 'mangaupdates' | 'mangadex' | 'anilist' | 'openlibrary'>('auto');
+  const [sourceFilter, setSourceFilter] = useState<'auto' | 'mangaupdates' | 'mangadex' | 'anilist' | 'kitsu' | 'bangumi' | 'openlibrary'>('auto');
   const [targetLang, setTargetLang] = useState<'es' | 'en' | 'ja'>('es');
   const [isLoading, setIsLoading] = useState(false);
   const [results, setResults] = useState<OnlineSearchResult[]>([]);
@@ -82,6 +82,7 @@ export const OnlineSearchModal: React.FC<OnlineSearchModalProps> = ({
 
   // Toggle between translated and original synopsis per item
   const [showOriginalFor, setShowOriginalFor] = useState<Record<string, boolean>>({});
+  const [translatingIds, setTranslatingIds] = useState<Record<string, boolean>>({});
 
   // Volume covers gallery state
   const [viewingVolumeCoversFor, setViewingVolumeCoversFor] = useState<OnlineSearchResult | null>(null);
@@ -126,7 +127,7 @@ export const OnlineSearchModal: React.FC<OnlineSearchModalProps> = ({
     performSearch(query, sourceFilter, targetLang);
   };
 
-  const handleSourceTabChange = (newSource: 'auto' | 'mangaupdates' | 'mangadex' | 'anilist' | 'openlibrary') => {
+  const handleSourceTabChange = (newSource: 'auto' | 'mangaupdates' | 'mangadex' | 'anilist' | 'kitsu' | 'bangumi' | 'openlibrary') => {
     setSourceFilter(newSource);
     if (query.trim()) {
       performSearch(query, newSource, targetLang);
@@ -137,6 +138,40 @@ export const OnlineSearchModal: React.FC<OnlineSearchModalProps> = ({
     setTargetLang(newLang);
     if (query.trim()) {
       performSearch(query, sourceFilter, newLang);
+    }
+  };
+
+  // Interactive on-demand translation of synopsis to Spanish
+  const handleTranslateSynopsis = async (item: OnlineSearchResult) => {
+    const itemKey = `${item.provider}-${item.id}`;
+    const textToTranslate = item.synopsis_original || item.synopsis_es;
+    if (!textToTranslate || translatingIds[itemKey]) return;
+
+    setTranslatingIds((prev) => ({ ...prev, [itemKey]: true }));
+    try {
+      const res = await translateOnlineText(textToTranslate, targetLang);
+      if (res.translated) {
+        setResults((prev) =>
+          prev.map((r) => {
+            if (`${r.provider}-${r.id}` === itemKey) {
+              return {
+                ...r,
+                synopsis_original: r.synopsis_original || r.synopsis_es,
+                synopsis_es: res.translated,
+                synopsis_was_translated: true,
+                synopsis_has_es: true,
+                language_status: 'complete',
+                language_notice: '✨ Sinopsis traducida al español'
+              };
+            }
+            return r;
+          })
+        );
+      }
+    } catch (err: any) {
+      setError('No se pudo traducir la sinopsis en este momento. Inténtalo de nuevo.');
+    } finally {
+      setTranslatingIds((prev) => ({ ...prev, [itemKey]: false }));
     }
   };
 
@@ -457,6 +492,8 @@ export const OnlineSearchModal: React.FC<OnlineSearchModalProps> = ({
                 { id: 'mangaupdates', label: 'MangaUpdates' },
                 { id: 'mangadex', label: 'MangaDex' },
                 { id: 'anilist', label: 'AniList' },
+                { id: 'kitsu', label: '🦊 Kitsu' },
+                { id: 'bangumi', label: '🌸 Bangumi' },
                 { id: 'openlibrary', label: 'OpenLibrary' },
               ].map((prov) => (
                 <button
@@ -701,7 +738,7 @@ export const OnlineSearchModal: React.FC<OnlineSearchModalProps> = ({
                       {/* Synopsis with Language Badge */}
                       {item.synopsis_es && (
                         <div className="mt-2 bg-comic-950/50 p-2.5 rounded-lg border border-comic-800/60 font-sans space-y-1.5">
-                          {item.synopsis_was_translated && (
+                          {item.synopsis_was_translated ? (
                             <div className="flex items-center justify-between text-[11px] pb-1 border-b border-comic-800/40">
                               <span className="text-indigo-400 font-semibold flex items-center gap-1.5">
                                 <Languages className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
@@ -724,7 +761,35 @@ export const OnlineSearchModal: React.FC<OnlineSearchModalProps> = ({
                                 </button>
                               )}
                             </div>
-                          )}
+                          ) : targetLang === 'es' ? (
+                            <div className="flex items-center justify-between text-[11px] pb-1 border-b border-comic-800/40">
+                              <span className="text-amber-400/90 text-[10px] font-medium flex items-center gap-1">
+                                <span>🌐 Sinopsis en idioma original</span>
+                              </span>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleTranslateSynopsis(item);
+                                }}
+                                disabled={translatingIds[`${item.provider}-${item.id}`]}
+                                className="px-2 py-0.5 rounded bg-indigo-950/90 hover:bg-indigo-900 border border-indigo-700/80 text-indigo-300 text-[10px] font-bold flex items-center gap-1 transition cursor-pointer shadow-xs disabled:opacity-50"
+                                title="Traducir esta sinopsis al español automáticamente"
+                              >
+                                {translatingIds[`${item.provider}-${item.id}`] ? (
+                                  <>
+                                    <Loader2 className="w-3 h-3 text-indigo-400 animate-spin" />
+                                    <span>Traduciendo...</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Languages className="w-3 h-3 text-indigo-400" />
+                                    <span>Traducir al español</span>
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                          ) : null}
                           <p className="text-xs text-slate-300/90 leading-relaxed line-clamp-3">
                             {showOriginalFor[`${item.provider}-${item.id}`] && item.synopsis_original
                               ? item.synopsis_original

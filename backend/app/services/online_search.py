@@ -21,7 +21,7 @@ _TRANSLATION_LOCK = threading.Lock()
 
 def translate_to_language(text: str, target_lang: str = "es") -> str:
     """
-    Translates text to target language using Google Translate free endpoint.
+    Translates text to target language using Google Translate free endpoints with fallback.
     Maintains an in-memory cache and splits into safe paragraph chunks.
     Falls back gracefully to the original text if offline or unreachable.
     """
@@ -64,15 +64,35 @@ def translate_to_language(text: str, target_lang: str = "es") -> str:
 
     translated_chunks = []
     for chunk in chunks[:4]:
+        success = False
+        # Endpoint 1: Google GTX
         try:
             url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl={tl}&dt=t&q=" + urllib.parse.quote(chunk)
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
             with urllib.request.urlopen(req, timeout=4) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 res_text = "".join([seg[0] for seg in data[0] if seg and seg[0]])
-                translated_chunks.append(res_text)
+                if res_text:
+                    translated_chunks.append(res_text)
+                    success = True
         except Exception as e:
-            logger.debug(f"Translation chunk error: {e}")
+            logger.debug(f"GTX translation chunk error: {e}")
+
+        # Endpoint 2 Fallback: dict-chrome-ex
+        if not success:
+            try:
+                url2 = f"https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=auto&tl={tl}&q=" + urllib.parse.quote(chunk)
+                req2 = urllib.request.Request(url2, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req2, timeout=4) as resp2:
+                    data2 = json.loads(resp2.read().decode("utf-8"))
+                    if isinstance(data2, list) and data2:
+                        res_text = data2[0] if isinstance(data2[0], str) else "".join(data2)
+                        translated_chunks.append(res_text)
+                        success = True
+            except Exception as e2:
+                logger.debug(f"Chrome-ex translation chunk error: {e2}")
+
+        if not success:
             translated_chunks.append(chunk)
 
     result = "\n\n".join(translated_chunks).strip()
@@ -92,51 +112,79 @@ def normalize_text(text: str) -> str:
     return " ".join(t.split())
 
 def compute_title_similarity(query: str, title: str) -> float:
+    """
+    Computes strict franchise and title similarity between query and title.
+    Discards unrelated works sharing single common words (e.g. 'Dragon', 'Tokyo', 'Monster').
+    """
     q_norm = normalize_text(query)
     t_norm = normalize_text(title)
     if not q_norm or not t_norm:
         return 0.0
     if q_norm == t_norm:
         return 1.0
-    if q_norm in t_norm:
-        return max(0.8, len(q_norm) / len(t_norm))
-    if t_norm in q_norm:
-        return max(0.75, len(t_norm) / len(q_norm))
-
-    q_words = set(q_norm.split())
-    t_words = set(t_norm.split())
-    if not q_words or not t_words:
-        return 0.0
 
     stopwords = {"the", "a", "an", "el", "la", "los", "las", "un", "una", "de", "del", "no", "of", "and", "y"}
-    meaningful_q_words = q_words - stopwords or q_words
-    meaningful_t_words = t_words - stopwords or t_words
+    q_words = [w for w in q_norm.split() if w not in stopwords] or q_norm.split()
+    t_words = [w for w in t_norm.split() if w not in stopwords] or t_norm.split()
 
-    common = meaningful_q_words & meaningful_t_words
+    q_set = set(q_words)
+    t_set = set(t_words)
+
+    # Substring containment
+    if q_norm in t_norm:
+        coverage = len(q_norm) / len(t_norm)
+        if coverage >= 0.70:
+            return 0.85 + (coverage - 0.70) * 0.50
+        return 0.55 + coverage * 0.35
+
+    if t_norm in q_norm:
+        coverage = len(t_norm) / len(q_norm)
+        return 0.60 + coverage * 0.35
+
+    common = q_set & t_set
     if not common:
         fuzzy_common = 0
-        for qw in meaningful_q_words:
-            if any(difflib.SequenceMatcher(None, qw, tw).ratio() >= 0.82 for tw in meaningful_t_words):
+        for qw in q_set:
+            if any(difflib.SequenceMatcher(None, qw, tw).ratio() >= 0.82 for tw in t_set):
                 fuzzy_common += 1
         if fuzzy_common == 0:
             return 0.0
-        word_match_ratio = fuzzy_common / len(meaningful_q_words)
+        q_cov = fuzzy_common / len(q_set)
     else:
-        word_match_ratio = len(common) / len(meaningful_q_words)
+        q_cov = len(common) / len(q_set)
 
+    # If query has multiple words and more than 40% of query words are missing from title, discard!
+    if len(q_set) > 1 and q_cov < 0.60:
+        return 0.15
+
+    dice = (2.0 * len(common)) / (len(q_set) + len(t_set))
     seq_ratio = difflib.SequenceMatcher(None, q_norm, t_norm).ratio()
-    return max(word_match_ratio * 0.85, seq_ratio)
+    token_score = dice * q_cov
+
+    if token_score >= 0.55 or seq_ratio >= 0.75:
+        return max(token_score, seq_ratio)
+    return min(token_score, seq_ratio) * 0.50
 
 def compute_item_similarity(query: str, item: Dict[str, Any]) -> float:
-    candidate_titles = [item.get("title")]
-    if item.get("title_english"): candidate_titles.append(item["title_english"])
-    if item.get("title_spanish"): candidate_titles.append(item["title_spanish"])
-    if item.get("title_romaji"): candidate_titles.append(item["title_romaji"])
-    for syn in (item.get("synonyms") or []):
-        if syn: candidate_titles.append(syn)
+    """
+    Computes maximum similarity for an item, giving priority to official titles
+    and requiring high confidence before accepting matches based solely on synonyms.
+    """
+    primary_titles = [item.get("title")]
+    if item.get("title_english"): primary_titles.append(item["title_english"])
+    if item.get("title_spanish"): primary_titles.append(item["title_spanish"])
+    if item.get("title_romaji"): primary_titles.append(item["title_romaji"])
 
-    sims = [compute_title_similarity(query, ct) for ct in candidate_titles if ct]
-    return max(sims, default=0.0)
+    primary_sims = [compute_title_similarity(query, pt) for pt in primary_titles if pt]
+    max_primary = max(primary_sims, default=0.0)
+
+    # Synonyms check: only boost if synonym is a very strong match (>= 0.75)
+    syn_sims = [compute_title_similarity(query, syn) for syn in (item.get("synonyms") or []) if syn]
+    max_syn = max(syn_sims, default=0.0)
+    if max_syn >= 0.75:
+        return max(max_primary, max_syn * 0.95)
+
+    return max_primary
 
 GENRE_TRANSLATIONS = {
     "Action": "Acción",
@@ -679,6 +727,226 @@ def search_openlibrary(query: str, limit: int = 5, target_lang: str = "es") -> L
 
     return results
 
+def search_kitsu(query: str, limit: int = 6, target_lang: str = "es") -> List[Dict[str, Any]]:
+    """
+    Searches Kitsu API for Manga, Manhwa, and Light Novels.
+    Kitsu has high quality covers, ratings, volume counts, and chapter counts.
+    """
+    results = []
+    target = (target_lang or "es").lower()
+    try:
+        url = f"https://kitsu.io/api/edge/manga?filter[text]={urllib.parse.quote(query)}&page[limit]={limit}"
+        req = urllib.request.Request(url, headers={**HEADERS, "Accept": "application/vnd.api+json"})
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            data = json.loads(resp.read().decode("utf-8")).get("data", [])
+
+        for item in data:
+            attrs = item.get("attributes", {})
+            k_id = str(item.get("id"))
+            canonical_title = attrs.get("canonicalTitle") or ""
+            titles = attrs.get("titles", {}) or {}
+            title_en = titles.get("en") or titles.get("en_us")
+            title_ja = titles.get("ja_jp") or titles.get("en_jp")
+            raw_desc = attrs.get("synopsis") or attrs.get("description") or ""
+
+            vol_count = attrs.get("volumeCount")
+            ch_count = attrs.get("chapterCount")
+            start_date = attrs.get("startDate") or ""
+            year = int(start_date.split("-")[0]) if start_date and "-" in start_date else None
+            
+            raw_rating = attrs.get("averageRating")
+            community_rating = None
+            if raw_rating:
+                try:
+                    community_rating = round(float(raw_rating) / 10.0, 1)
+                except Exception:
+                    pass
+
+            poster = attrs.get("posterImage", {}) or {}
+            cover_url = poster.get("large") or poster.get("original") or poster.get("medium")
+
+            raw_status = attrs.get("status") or ""
+            status_map = {
+                "finished": "Finalizado",
+                "current": "En emisión",
+                "unreleased": "Próximamente",
+                "upcoming": "Próximamente",
+                "tba": "Por anunciar"
+            }
+            status_es = status_map.get(raw_status.lower(), raw_status.capitalize() if raw_status else "Desconocido")
+
+            synopsis_was_translated = False
+            raw_original_synopsis = raw_desc
+            if target in ("es", "es-la"):
+                chosen_title = title_en or canonical_title
+                has_title_target = False
+                if raw_desc:
+                    translated = translate_to_language(raw_desc, "es")
+                    if translated and translated != raw_desc:
+                        chosen_synopsis = translated
+                        synopsis_was_translated = True
+                        has_synopsis_target = True
+                    else:
+                        chosen_synopsis = raw_desc
+                        has_synopsis_target = False
+                else:
+                    chosen_synopsis = ""
+                    has_synopsis_target = False
+            elif target in ("en", "en-us"):
+                chosen_title = title_en or canonical_title
+                chosen_synopsis = raw_desc
+                has_title_target = bool(title_en)
+                has_synopsis_target = bool(raw_desc)
+            else:
+                chosen_title = title_ja or canonical_title
+                chosen_synopsis = raw_desc
+                has_title_target = bool(title_ja)
+                has_synopsis_target = bool(raw_desc)
+
+            lang_status, lang_notice = compute_language_status(
+                target_lang=target,
+                has_title_in_target=has_title_target,
+                has_synopsis_in_target=has_synopsis_target,
+                target_title_val=title_en,
+                fallback_title_val=canonical_title,
+                synopsis_was_translated=synopsis_was_translated
+            )
+
+            subtype = (attrs.get("subtype") or "Manga").capitalize()
+
+            results.append({
+                "id": k_id,
+                "provider": "kitsu",
+                "provider_label": "Kitsu (Manga / Anime)",
+                "title": chosen_title or canonical_title,
+                "title_spanish": None,
+                "title_english": title_en,
+                "title_romaji": title_ja or canonical_title,
+                "target_lang": target,
+                "has_title_in_language": has_title_target,
+                "has_synopsis_in_language": has_synopsis_target,
+                "synopsis_original": raw_original_synopsis,
+                "synopsis_was_translated": synopsis_was_translated,
+                "language_status": lang_status,
+                "language_notice": lang_notice,
+                "synonyms": [v for v in titles.values() if v and v != chosen_title],
+                "synopsis_es": chosen_synopsis,
+                "synopsis_has_es": bool(chosen_synopsis),
+                "volumes": vol_count,
+                "chapters": ch_count,
+                "status": raw_status.upper() if raw_status else "UNKNOWN",
+                "status_es": status_es,
+                "year": year,
+                "genres": [subtype],
+                "tags": [subtype],
+                "authors": [],
+                "community_rating": community_rating,
+                "cover_url": cover_url,
+                "has_volume_covers": False
+            })
+    except Exception as e:
+        logger.warning(f"Error fetching from Kitsu: {e}")
+
+    return results
+
+def search_bangumi(query: str, limit: int = 5, target_lang: str = "es") -> List[Dict[str, Any]]:
+    """
+    Searches Bangumi open API for Japanese Manga, Manhua, Light Novels and Comics.
+    """
+    results = []
+    target = (target_lang or "es").lower()
+    try:
+        url = "https://api.bgm.tv/v0/search/subjects"
+        body = json.dumps({"keyword": query, "filter": {"type": [1]}}).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=body,
+            headers={**HEADERS, "Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            data = json.loads(resp.read().decode("utf-8")).get("data", [])
+
+        for item in data[:limit]:
+            b_id = str(item.get("id"))
+            name = item.get("name") or ""
+            name_cn = item.get("name_cn") or ""
+            raw_summary = item.get("summary") or ""
+            score = item.get("score")
+            eps = item.get("eps")
+            vols = item.get("volumes")
+            date_str = item.get("date") or ""
+            year = int(date_str.split("-")[0]) if date_str and "-" in date_str else None
+
+            images = item.get("images", {}) or {}
+            cover_url = images.get("large") or images.get("common") or images.get("medium")
+
+            synopsis_was_translated = False
+            raw_original_synopsis = raw_summary
+            if target in ("es", "es-la"):
+                chosen_title = name or name_cn
+                has_title_target = False
+                if raw_summary:
+                    translated = translate_to_language(raw_summary, "es")
+                    if translated and translated != raw_summary:
+                        chosen_synopsis = translated
+                        synopsis_was_translated = True
+                        has_synopsis_target = True
+                    else:
+                        chosen_synopsis = raw_summary
+                        has_synopsis_target = False
+                else:
+                    chosen_synopsis = ""
+                    has_synopsis_target = False
+            else:
+                chosen_title = name or name_cn
+                chosen_synopsis = raw_summary
+                has_title_target = True
+                has_synopsis_target = bool(raw_summary)
+
+            lang_status, lang_notice = compute_language_status(
+                target_lang=target,
+                has_title_in_target=has_title_target,
+                has_synopsis_in_target=has_synopsis_target,
+                target_title_val=name,
+                fallback_title_val=name,
+                synopsis_was_translated=synopsis_was_translated
+            )
+
+            results.append({
+                "id": b_id,
+                "provider": "bangumi",
+                "provider_label": "Bangumi (BBDD Asiática)",
+                "title": chosen_title,
+                "title_spanish": None,
+                "title_english": name,
+                "title_romaji": name,
+                "target_lang": target,
+                "has_title_in_language": has_title_target,
+                "has_synopsis_in_language": has_synopsis_target,
+                "synopsis_original": raw_original_synopsis,
+                "synopsis_was_translated": synopsis_was_translated,
+                "language_status": lang_status,
+                "language_notice": lang_notice,
+                "synonyms": [name_cn] if name_cn and name_cn != name else [],
+                "synopsis_es": chosen_synopsis,
+                "synopsis_has_es": bool(chosen_synopsis),
+                "volumes": vols or None,
+                "chapters": eps or None,
+                "status": "FINISHED" if eps else "UNKNOWN",
+                "status_es": "Publicado",
+                "year": year,
+                "genres": ["Manga"],
+                "tags": ["Manga"],
+                "authors": [],
+                "community_rating": score,
+                "cover_url": cover_url,
+                "has_volume_covers": False
+            })
+    except Exception as e:
+        logger.warning(f"Error fetching from Bangumi: {e}")
+
+    return results
+
 def search_mangaupdates(query: str, limit: int = 6, target_lang: str = "es") -> List[Dict[str, Any]]:
     """
     Searches MangaUpdates API with comprehensive ComicInfo metadata mapping:
@@ -1074,6 +1342,10 @@ def unified_online_search(query: str, source: str = "auto", target_lang: str = "
                 return search_mangadex(clean_query, limit=6, target_lang=target)
             elif src_name == "anilist":
                 return search_anilist(clean_query, limit=6, target_lang=target)
+            elif src_name == "kitsu":
+                return search_kitsu(clean_query, limit=6, target_lang=target)
+            elif src_name == "bangumi":
+                return search_bangumi(clean_query, limit=5, target_lang=target)
             elif src_name == "openlibrary":
                 return search_openlibrary(clean_query, limit=4, target_lang=target)
         except Exception as e:
@@ -1082,12 +1354,12 @@ def unified_online_search(query: str, source: str = "auto", target_lang: str = "
 
     sources_to_run = []
     if source == "auto":
-        sources_to_run = ["mangaupdates", "mangadex", "anilist"]
+        sources_to_run = ["mangaupdates", "mangadex", "anilist", "kitsu"]
     else:
         sources_to_run = [source]
 
     from concurrent.futures import ThreadPoolExecutor
-    with ThreadPoolExecutor(max_workers=min(4, len(sources_to_run))) as executor:
+    with ThreadPoolExecutor(max_workers=min(5, len(sources_to_run))) as executor:
         futures = [executor.submit(fetch_source, s) for s in sources_to_run]
         for f in futures:
             try:
@@ -1104,11 +1376,11 @@ def unified_online_search(query: str, source: str = "auto", target_lang: str = "
         item["similarity_score"] = round(compute_item_similarity(clean_query, item), 2)
 
     # Strict relevance filter:
-    # 0.40 cutoff removes unrelated books/manga returned by loose tags/descriptions.
-    # If no results meet 0.40, relax to 0.25 (to handle slight typos).
-    relevant = [item for item in combined if item.get("similarity_score", 0.0) >= 0.40]
+    # 0.45 cutoff removes unrelated books/manga returned by loose tags/descriptions.
+    # If no results meet 0.45, relax to 0.30 (to handle slight typos).
+    relevant = [item for item in combined if item.get("similarity_score", 0.0) >= 0.45]
     if not relevant and combined:
-        relevant = [item for item in combined if item.get("similarity_score", 0.0) >= 0.25]
+        relevant = [item for item in combined if item.get("similarity_score", 0.0) >= 0.30]
     if not relevant:
         relevant = combined
 

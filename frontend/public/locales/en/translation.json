@@ -49,7 +49,11 @@
     "custom": "Custom",
     "noSeries": "No Series",
     "moveUp": "Move up",
-    "moveDown": "Move down"
+    "moveDown": "Move down",
+    "open": "Open",
+    "works": "works",
+    "tomos": "Volumes",
+    "chapters": "Chapters"
   },
   "header": {
     "readyToOrganize": "Ready to organize and optimize your comics",
@@ -613,7 +617,8 @@
     "singleOrphanDetected": "1 orphan detected",
     "freeOrphanSpace": "Free Orphan Storage",
     "cleaning": "Cleaning...",
-    "orphansShort": "orph."
+    "orphansShort": "orph.",
+    "tempShort": "In Prep:"
   },
   "pageInspector": {
     "inspectPage": "Inspect Page #{order}",

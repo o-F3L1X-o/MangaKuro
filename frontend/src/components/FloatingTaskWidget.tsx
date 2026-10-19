@@ -436,7 +436,7 @@ export const FloatingTaskWidget: React.FC<FloatingTaskWidgetProps> = ({
               {uploadTask.isCompleted && (
                 <div className="flex items-center justify-between gap-2 pt-1 border-t border-emerald-800/50 text-xs">
                   <span className="text-[11px] text-emerald-200">
-                    {uploadTask.totalFiles} {uploadTask.totalFiles === 1 ? 'archivo listo' : 'archivos listos'} en Staging
+                    {uploadTask.totalFiles} {uploadTask.totalFiles === 1 ? 'archivo listo' : 'archivos listos'} en Preparación
                   </span>
                   <button
                     type="button"

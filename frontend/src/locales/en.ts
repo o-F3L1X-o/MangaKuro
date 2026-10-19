@@ -44,6 +44,10 @@ export const en: typeof es = {
     active: 'Active',
     original: 'Original',
     custom: 'Custom',
+    open: 'Open',
+    works: 'works',
+    tomos: 'Volumes',
+    chapters: 'Chapters',
   },
   header: {
     toggleSidebar: 'Toggle sidebar',

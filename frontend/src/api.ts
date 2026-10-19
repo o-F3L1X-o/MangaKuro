@@ -920,6 +920,16 @@ export async function fetchSeriesOnlineSummary(seriesName: string, targetLang: s
   return res.json();
 }
 
+export async function translateOnlineText(text: string, targetLang: string = 'es'): Promise<{ translated: string; original: string; success: boolean }> {
+  const res = await fetch(`${API_BASE}/online/translate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, target_lang: targetLang })
+  });
+  if (!res.ok) throw new Error('Error al traducir texto');
+  return res.json();
+}
+
 // --- Verification & Safe NAS Overwrite API ---
 
 export async function confirmSessionVerification(

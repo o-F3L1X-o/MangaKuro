@@ -247,6 +247,10 @@ class ApplyOnlineCoverRequest(BaseModel):
     mode: str = "insert_first" # "insert_first" or "replace_first"
     custom_name: Optional[str] = "Portada Oficial.jpg"
 
+class TranslateTextRequest(BaseModel):
+    text: str
+    target_lang: str = "es"
+
 # --- Authentication Endpoints ---
 
 @app.get("/api/auth/status")
@@ -1029,6 +1033,17 @@ async def apply_online_cover_endpoint(session_id: str, req: ApplyOnlineCoverRequ
     except Exception as e:
         logger.error(f"Error applying online cover to session {session_id}: {e}")
         raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/api/online/translate")
+async def translate_text_endpoint(req: TranslateTextRequest):
+    """Translates a text (e.g. synopsis) to target language (default Spanish)."""
+    from app.services.online_search import translate_to_language
+    try:
+        translated = await asyncio.to_thread(translate_to_language, text=req.text, target_lang=req.target_lang)
+        return {"translated": translated, "original": req.text, "success": bool(translated and translated != req.text)}
+    except Exception as e:
+        logger.error(f"Error translating text: {e}")
+        return {"translated": req.text, "original": req.text, "success": False, "error": str(e)}
 
 # --- Export & Komga Integration ---
 

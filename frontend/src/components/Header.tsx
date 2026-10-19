@@ -19,7 +19,8 @@ import {
   Sliders,
   Sun,
   Moon,
-  Layers
+  Layers,
+  Library
 } from 'lucide-react';
 import { SessionManifest } from '../types';
 import { APP_VERSION, APP_NAME } from '../version';
@@ -288,11 +289,11 @@ export const Header: React.FC<HeaderProps> = ({
               <button
                 type="button"
                 onClick={onCloseCurrent}
-                className="h-8 px-2.5 sm:px-3 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 hover:text-amber-700 border border-slate-300 dark:bg-comic-800 dark:hover:bg-comic-700 dark:text-slate-300 dark:hover:text-amber-300 dark:border-comic-700/80 text-xs font-semibold transition active:scale-95 flex items-center gap-1.5 shrink-0 whitespace-nowrap cursor-pointer"
-                title={t('header.closeCurrentTitle')}
+                className="h-8 px-2.5 sm:px-3 rounded-lg bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 hover:text-white border border-indigo-700/80 text-xs font-bold transition active:scale-95 flex items-center gap-1.5 shrink-0 whitespace-nowrap cursor-pointer shadow-xs"
+                title="Volver al índice general de cómics cargados"
               >
-                <FolderClosed className="w-4 h-4 text-amber-500 dark:text-amber-400 shrink-0" />
-                <span className="hidden lg:inline">{t('header.closeCurrent')}</span>
+                <Library className="w-4 h-4 text-indigo-400 shrink-0" />
+                <span>← Índice General</span>
               </button>
             </>
           ) : (

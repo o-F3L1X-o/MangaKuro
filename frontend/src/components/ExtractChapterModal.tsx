@@ -166,7 +166,7 @@ export const ExtractChapterModal: React.FC<ExtractChapterModalProps> = ({
                 ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-500/40'
                 : 'text-slate-400 hover:text-white hover:bg-comic-900'
             }`}
-            title={otherSessions.length === 0 ? 'No hay otros cómics en staging' : ''}
+            title={otherSessions.length === 0 ? 'No hay otros cómics en preparación' : ''}
           >
             <FolderInput className="w-4 h-4" />
             <span>Mover a otro Tomo ({otherSessions.length})</span>
