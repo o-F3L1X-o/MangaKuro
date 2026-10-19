@@ -88,10 +88,16 @@ def resolve_clean_staging_path(raw_path: Any) -> Optional[Path]:
     s = str(raw_path).strip().strip('"').strip("'").strip()
     if not s:
         return None
+    import os
+    # If running on Linux/Unix and path starts with a Windows drive letter (e.g. "E:\..."),
+    # it is an invalid local path on Linux. Do not treat as relative directory.
+    if os.name != "nt" and re.match(r'^[a-zA-Z]:', s):
+        logger.warning(f"Ignoring Windows drive path '{s}' on Linux environment.")
+        return None
+
     # Fix accidental space between drive letter and backslash e.g. "E: \something" -> "E:\something"
     s = re.sub(r'^([a-zA-Z]:)\s*[/\\]', r'\1\\', s)
     # Fix forward slashes on Windows UNC paths: "//server/share" -> "\\server\share"
-    import os
     if os.name == "nt" and s.startswith("//"):
         s = "\\\\" + s[2:].replace("/", "\\")
     return Path(s)
@@ -117,33 +123,38 @@ class SessionManager:
     def staging_dir(self) -> Path:
         if self._custom_staging_dir:
             p = resolve_clean_staging_path(self._custom_staging_dir)
-            if p:
+            if p and p.exists():
                 if (p / "staging").is_dir():
                     return p / "staging"
                 if p.is_dir():
                     return p
-                try:
-                    p.mkdir(parents=True, exist_ok=True)
-                    return p
-                except Exception:
-                    pass
+
         try:
             from app.config import load_settings
             settings = load_settings()
             if settings.staging_directory and settings.staging_directory.strip():
                 p = resolve_clean_staging_path(settings.staging_directory)
-                if p:
+                if p and p.exists():
                     if (p / "staging").is_dir():
                         return p / "staging"
                     if p.is_dir():
                         return p
-                    try:
-                        p.mkdir(parents=True, exist_ok=True)
-                        return p
-                    except Exception:
-                        pass
         except Exception:
             pass
+
+        # Auto-detect mounted network staging candidates if available
+        for candidate in [
+            Path("/mnt/mangakuro_data"),
+            Path("/mnt/staging"),
+        ]:
+            try:
+                if (candidate / "staging").is_dir():
+                    return candidate / "staging"
+                if candidate.is_dir():
+                    return candidate
+            except Exception:
+                pass
+
         if (DEFAULT_STAGING_DIR / "staging").is_dir():
             return DEFAULT_STAGING_DIR / "staging"
         DEFAULT_STAGING_DIR.mkdir(parents=True, exist_ok=True)

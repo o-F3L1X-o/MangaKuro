@@ -334,6 +334,8 @@ async def browse_server_fs(path: Optional[str] = None):
         pass
 
     for candidate, label in [
+        (Path("/mnt/mangakuro_data"), "Staging SMB (/mnt/mangakuro_data)"),
+        (Path("/mnt/staging"), "Staging (/mnt/staging)"),
         (Path("/comics_library"), "Biblioteca /comics_library"),
         (Path("/downloads"), "Descargas /downloads"),
         (Path("/media"), "Medios /media"),

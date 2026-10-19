@@ -15,8 +15,9 @@ services:
       # Carpeta destino leída por Komga (ajústala a tu biblioteca de cómics)
       - ./data/export:/comics_library
       # Montajes de red del host para leer/escribir en SMB/CIFS/NFS o discos externos
-      - /mnt:/mnt
-      - /media:/media
+      - /mnt/mangakuro_data:/mnt/mangakuro_data
+      - /mnt:/mnt:rslave
+      - /media:/media:rslave
     environment:
       - DATA_DIR=/app/data
       - STAGING_DIR=/app/data/staging
