@@ -1,0 +1,11 @@
+fastapi>=0.110.0
+uvicorn[standard]>=0.28.0
+pymupdf>=1.24.0
+pillow>=10.2.0
+python-multipart>=0.0.9
+pydantic>=2.6.0
+defusedxml>=0.7.1
+psutil>=5.9.0
+py7zr>=1.1.0
+rarfile>=4.0
+pytesseract>=0.3.10
