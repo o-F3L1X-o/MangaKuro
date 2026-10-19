@@ -16,7 +16,8 @@ import {
   Bookmark,
   ChevronRight,
   Info,
-  Check
+  Check,
+  Languages
 } from 'lucide-react';
 import { ComicInfo, OnlineSearchResult, SessionManifest, VolumeCoverItem } from '../types';
 import { searchOnlineManga, fetchMangaDexVolumeCovers, applyOnlineCover } from '../api';
@@ -78,6 +79,9 @@ export const OnlineSearchModal: React.FC<OnlineSearchModalProps> = ({
   } | null>(null);
   const [isApplyingCover, setIsApplyingCover] = useState(false);
   const [successToast, setSuccessToast] = useState<string | null>(null);
+
+  // Toggle between translated and original synopsis per item
+  const [showOriginalFor, setShowOriginalFor] = useState<Record<string, boolean>>({});
 
   // Volume covers gallery state
   const [viewingVolumeCoversFor, setViewingVolumeCoversFor] = useState<OnlineSearchResult | null>(null);
@@ -211,11 +215,14 @@ export const OnlineSearchModal: React.FC<OnlineSearchModalProps> = ({
       const allGenres = item.genres && item.genres.length > 0 ? item.genres.join(', ') : currentMeta.Genre;
       const allTags = item.tags && item.tags.length > 0 ? item.tags.join(', ') : (currentMeta.Tags || allGenres);
 
+      const isOriginalShown = showOriginalFor[`${item.provider}-${item.id}`];
+      const chosenSummary = (isOriginalShown && item.synopsis_original ? item.synopsis_original : item.synopsis_es) || currentMeta.Summary;
+
       const updatedMeta: ComicInfo = {
         ...currentMeta,
         Series: chosenTitle || currentMeta.Series,
         AlternateSeries: item.title_english || item.title_romaji || currentMeta.AlternateSeries,
-        Summary: item.synopsis_es || currentMeta.Summary,
+        Summary: chosenSummary,
         Year: item.year ? parseInt(String(item.year)) : currentMeta.Year,
         Genre: allGenres,
         Tags: allTags,
@@ -693,9 +700,35 @@ export const OnlineSearchModal: React.FC<OnlineSearchModalProps> = ({
 
                       {/* Synopsis with Language Badge */}
                       {item.synopsis_es && (
-                        <div className="mt-2 bg-comic-950/50 p-2.5 rounded-lg border border-comic-800/60 font-sans space-y-1">
+                        <div className="mt-2 bg-comic-950/50 p-2.5 rounded-lg border border-comic-800/60 font-sans space-y-1.5">
+                          {item.synopsis_was_translated && (
+                            <div className="flex items-center justify-between text-[11px] pb-1 border-b border-comic-800/40">
+                              <span className="text-indigo-400 font-semibold flex items-center gap-1.5">
+                                <Languages className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                                <span>Traducido automáticamente al español</span>
+                              </span>
+                              {item.synopsis_original && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const itemKey = `${item.provider}-${item.id}`;
+                                    setShowOriginalFor(prev => ({
+                                      ...prev,
+                                      [itemKey]: !prev[itemKey]
+                                    }));
+                                  }}
+                                  className="text-[10px] text-slate-400 hover:text-indigo-300 font-medium underline transition cursor-pointer"
+                                >
+                                  {showOriginalFor[`${item.provider}-${item.id}`] ? 'Ver traducción' : 'Ver original'}
+                                </button>
+                              )}
+                            </div>
+                          )}
                           <p className="text-xs text-slate-300/90 leading-relaxed line-clamp-3">
-                            {item.synopsis_es}
+                            {showOriginalFor[`${item.provider}-${item.id}`] && item.synopsis_original
+                              ? item.synopsis_original
+                              : item.synopsis_es}
                           </p>
                         </div>
                       )}

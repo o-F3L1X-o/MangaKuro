@@ -4,14 +4,139 @@ import re
 import threading
 import urllib.parse
 import urllib.request
+import difflib
+import unicodedata
+import concurrent.futures
 from typing import List, Dict, Any, Optional, Tuple
 
 logger = logging.getLogger("online_search")
 
 HEADERS = {
-    "User-Agent": "MangaKuro/1.0 (https://github.com/o-F3L1X-o/MangaKuro)",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 MangaKuro/0.9.5",
     "Accept": "application/json"
 }
+
+_TRANSLATION_CACHE: Dict[str, str] = {}
+_TRANSLATION_LOCK = threading.Lock()
+
+def translate_to_language(text: str, target_lang: str = "es") -> str:
+    """
+    Translates text to target language using Google Translate free endpoint.
+    Maintains an in-memory cache and splits into safe paragraph chunks.
+    Falls back gracefully to the original text if offline or unreachable.
+    """
+    if not text or not text.strip():
+        return ""
+
+    clean = re.sub(r"<br\s*/?>", "\n", text)
+    clean = re.sub(r"<.*?>", "", clean)
+    clean = re.sub(r"\[.*?\]\(.*?\)", "", clean).strip()
+    if not clean:
+        return ""
+
+    target = (target_lang or "es").lower()
+    if target in ("es", "es-la", "es-es"):
+        tl = "es"
+    elif target in ("en", "en-us"):
+        tl = "en"
+    elif target in ("ja", "ja-ro"):
+        tl = "ja"
+    else:
+        tl = target
+
+    cache_key = f"{tl}:{hash(clean)}"
+    with _TRANSLATION_LOCK:
+        if cache_key in _TRANSLATION_CACHE:
+            return _TRANSLATION_CACHE[cache_key]
+
+    paragraphs = clean.split("\n")
+    chunks = []
+    current_chunk = ""
+    for p in paragraphs:
+        if len(current_chunk) + len(p) < 1200:
+            current_chunk += ("\n" if current_chunk else "") + p
+        else:
+            if current_chunk:
+                chunks.append(current_chunk)
+            current_chunk = p
+    if current_chunk:
+        chunks.append(current_chunk)
+
+    translated_chunks = []
+    for chunk in chunks[:4]:
+        try:
+            url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl={tl}&dt=t&q=" + urllib.parse.quote(chunk)
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=4) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                res_text = "".join([seg[0] for seg in data[0] if seg and seg[0]])
+                translated_chunks.append(res_text)
+        except Exception as e:
+            logger.debug(f"Translation chunk error: {e}")
+            translated_chunks.append(chunk)
+
+    result = "\n\n".join(translated_chunks).strip()
+    with _TRANSLATION_LOCK:
+        if len(_TRANSLATION_CACHE) > 500:
+            _TRANSLATION_CACHE.clear()
+        _TRANSLATION_CACHE[cache_key] = result
+    return result
+
+def normalize_text(text: str) -> str:
+    if not text:
+        return ""
+    t = text.lower()
+    t = "".join(c for c in unicodedata.normalize("NFD", t) if unicodedata.category(c) != "Mn")
+    t = re.sub(r"[^a-z0-9]+", " ", t)
+    t = re.sub(r"\b(tomo|volume|vol|capitulo|cap|chapter|ch)\s*\d*\b", "", t)
+    return " ".join(t.split())
+
+def compute_title_similarity(query: str, title: str) -> float:
+    q_norm = normalize_text(query)
+    t_norm = normalize_text(title)
+    if not q_norm or not t_norm:
+        return 0.0
+    if q_norm == t_norm:
+        return 1.0
+    if q_norm in t_norm:
+        return max(0.8, len(q_norm) / len(t_norm))
+    if t_norm in q_norm:
+        return max(0.75, len(t_norm) / len(q_norm))
+
+    q_words = set(q_norm.split())
+    t_words = set(t_norm.split())
+    if not q_words or not t_words:
+        return 0.0
+
+    stopwords = {"the", "a", "an", "el", "la", "los", "las", "un", "una", "de", "del", "no", "of", "and", "y"}
+    meaningful_q_words = q_words - stopwords or q_words
+    meaningful_t_words = t_words - stopwords or t_words
+
+    common = meaningful_q_words & meaningful_t_words
+    if not common:
+        fuzzy_common = 0
+        for qw in meaningful_q_words:
+            if any(difflib.SequenceMatcher(None, qw, tw).ratio() >= 0.82 for tw in meaningful_t_words):
+                fuzzy_common += 1
+        if fuzzy_common == 0:
+            return 0.0
+        word_match_ratio = fuzzy_common / len(meaningful_q_words)
+    else:
+        word_match_ratio = len(common) / len(meaningful_q_words)
+
+    seq_ratio = difflib.SequenceMatcher(None, q_norm, t_norm).ratio()
+    return max(word_match_ratio * 0.85, seq_ratio)
+
+def compute_item_similarity(query: str, item: Dict[str, Any]) -> float:
+    candidate_titles = [item.get("title")]
+    if item.get("title_english"): candidate_titles.append(item["title_english"])
+    if item.get("title_spanish"): candidate_titles.append(item["title_spanish"])
+    if item.get("title_romaji"): candidate_titles.append(item["title_romaji"])
+    for syn in (item.get("synonyms") or []):
+        if syn: candidate_titles.append(syn)
+
+    sims = [compute_title_similarity(query, ct) for ct in candidate_titles if ct]
+    return max(sims, default=0.0)
 
 GENRE_TRANSLATIONS = {
     "Action": "Acción",
@@ -74,7 +199,8 @@ def compute_language_status(
     has_title_in_target: bool,
     has_synopsis_in_target: bool,
     target_title_val: Optional[str] = None,
-    fallback_title_val: Optional[str] = None
+    fallback_title_val: Optional[str] = None,
+    synopsis_was_translated: bool = False
 ) -> Tuple[str, str]:
     """
     Computes (language_status, language_notice) for complete user clarity.
@@ -84,7 +210,12 @@ def compute_language_status(
     target = (target_lang or "es").lower()
 
     if target in ("es", "es-la", "es-es"):
-        if has_title_in_target and has_synopsis_in_target:
+        if synopsis_was_translated:
+            if has_title_in_target:
+                return "complete", "✅ Metadatos en español (Sinopsis traducida)"
+            fb = f" (usando '{fallback_title_val}')" if fallback_title_val else ""
+            return "complete", f"✨ Sinopsis traducida al español{fb}"
+        elif has_title_in_target and has_synopsis_in_target:
             return "complete", "✅ Metadatos completos en Español"
         elif has_title_in_target and not has_synopsis_in_target:
             return "partial", "🟡 Título en español encontrado. Sinopsis solo disponible en inglés."
@@ -159,11 +290,26 @@ def search_mangadex(query: str, limit: int = 8, target_lang: str = "es") -> List
             desc_ja = desc_map.get("ja", "")
 
             # Determine title & synopsis based on requested target_lang
+            synopsis_was_translated = False
+            raw_original_synopsis = desc_en or desc_ja or ""
             if target in ("es", "es-la"):
                 chosen_title = title_es or title_en or title_main
-                chosen_synopsis = desc_es or desc_en
                 has_title_target = bool(title_es)
-                has_synopsis_target = bool(desc_es)
+                if desc_es:
+                    chosen_synopsis = desc_es
+                    has_synopsis_target = True
+                elif desc_en:
+                    translated = translate_to_language(desc_en, "es")
+                    if translated and translated != desc_en:
+                        chosen_synopsis = translated
+                        synopsis_was_translated = True
+                        has_synopsis_target = True
+                    else:
+                        chosen_synopsis = desc_en
+                        has_synopsis_target = False
+                else:
+                    chosen_synopsis = ""
+                    has_synopsis_target = False
             elif target in ("en", "en-us"):
                 chosen_title = title_en or title_main
                 chosen_synopsis = desc_en
@@ -185,7 +331,8 @@ def search_mangadex(query: str, limit: int = 8, target_lang: str = "es") -> List
                 has_title_in_target=has_title_target,
                 has_synopsis_in_target=has_synopsis_target,
                 target_title_val=title_es if target.startswith("es") else title_en,
-                fallback_title_val=title_main
+                fallback_title_val=title_main,
+                synopsis_was_translated=synopsis_was_translated
             )
 
             # 3. Status
@@ -247,11 +394,13 @@ def search_mangadex(query: str, limit: int = 8, target_lang: str = "es") -> List
                 "target_lang": target,
                 "has_title_in_language": has_title_target,
                 "has_synopsis_in_language": has_synopsis_target,
+                "synopsis_original": raw_original_synopsis,
+                "synopsis_was_translated": synopsis_was_translated,
                 "language_status": lang_status,
                 "language_notice": lang_notice,
                 "synonyms": synonyms_list[:8],
                 "synopsis_es": chosen_synopsis or "",
-                "synopsis_has_es": bool(desc_es),
+                "synopsis_has_es": bool(desc_es or synopsis_was_translated),
                 "volumes": last_vol if last_vol and str(last_vol).strip() else None,
                 "chapters": last_ch if last_ch and str(last_ch).strip() else None,
                 "status": raw_status,
@@ -401,16 +550,31 @@ def search_anilist(query: str, limit: int = 6, target_lang: str = "es") -> List[
             genres = [translate_genre(g) for g in item.get("genres", [])]
             cover = item.get("coverImage", {}).get("extraLarge") or item.get("coverImage", {}).get("large")
 
+            synopsis_was_translated = False
+            raw_original_synopsis = raw_desc or ""
             if target in ("es", "es-la"):
                 chosen_title = title_es or english or romaji or user_pref
                 has_title_target = bool(title_es)
-                has_synopsis_target = False  # AniList descriptions are English only
+                if raw_desc:
+                    translated = translate_to_language(raw_desc, "es")
+                    if translated and translated != raw_desc:
+                        chosen_synopsis = translated
+                        synopsis_was_translated = True
+                        has_synopsis_target = True
+                    else:
+                        chosen_synopsis = raw_desc
+                        has_synopsis_target = False
+                else:
+                    chosen_synopsis = ""
+                    has_synopsis_target = False
             elif target in ("en", "en-us"):
                 chosen_title = english or romaji or user_pref
+                chosen_synopsis = raw_desc
                 has_title_target = bool(english)
                 has_synopsis_target = bool(raw_desc)
             else:
                 chosen_title = romaji or native or user_pref
+                chosen_synopsis = raw_desc
                 has_title_target = bool(romaji or native)
                 has_synopsis_target = False
 
@@ -419,7 +583,8 @@ def search_anilist(query: str, limit: int = 6, target_lang: str = "es") -> List[
                 has_title_in_target=has_title_target,
                 has_synopsis_in_target=has_synopsis_target,
                 target_title_val=title_es if target.startswith("es") else english,
-                fallback_title_val=romaji or english or user_pref
+                fallback_title_val=romaji or english or user_pref,
+                synopsis_was_translated=synopsis_was_translated
             )
 
             results.append({
@@ -433,11 +598,13 @@ def search_anilist(query: str, limit: int = 6, target_lang: str = "es") -> List[
                 "target_lang": target,
                 "has_title_in_language": has_title_target,
                 "has_synopsis_in_language": has_synopsis_target,
+                "synopsis_original": raw_original_synopsis,
+                "synopsis_was_translated": synopsis_was_translated,
                 "language_status": lang_status,
                 "language_notice": lang_notice,
                 "synonyms": synonyms[:8],
-                "synopsis_es": raw_desc or "",
-                "synopsis_has_es": False,
+                "synopsis_es": chosen_synopsis or "",
+                "synopsis_has_es": bool(chosen_synopsis),
                 "volumes": item.get("volumes"),
                 "chapters": item.get("chapters"),
                 "status": raw_status,
@@ -490,6 +657,8 @@ def search_openlibrary(query: str, limit: int = 5, target_lang: str = "es") -> L
                 "language_status": "complete",
                 "language_notice": "✅ Edición registrada en Open Library",
                 "synonyms": [],
+                "synopsis_original": f"Editorial: {publisher}. Año de edición: {publish_year}." if publisher else "",
+                "synopsis_was_translated": False,
                 "synopsis_es": f"Editorial: {publisher}. Año de edición: {publish_year}." if publisher else "",
                 "synopsis_has_es": True,
                 "volumes": None,
@@ -654,16 +823,31 @@ def search_mangaupdates(query: str, limit: int = 6, target_lang: str = "es") -> 
             penciller_val = pencillers[0] if pencillers else (authors_list[1] if len(authors_list) > 1 else "")
 
             # Title and language resolution
+            synopsis_was_translated = False
+            raw_original_synopsis = desc or ""
             if target in ("es", "es-la"):
                 chosen_title = title_es or title
                 has_title_target = bool(title_es)
-                has_synopsis_target = False  # MangaUpdates synopses are English
+                if desc:
+                    translated = translate_to_language(desc, "es")
+                    if translated and translated != desc:
+                        chosen_synopsis = translated
+                        synopsis_was_translated = True
+                        has_synopsis_target = True
+                    else:
+                        chosen_synopsis = desc
+                        has_synopsis_target = False
+                else:
+                    chosen_synopsis = ""
+                    has_synopsis_target = False
             elif target in ("en", "en-us"):
                 chosen_title = title
+                chosen_synopsis = desc
                 has_title_target = True
                 has_synopsis_target = bool(desc)
             else:
                 chosen_title = title
+                chosen_synopsis = desc
                 has_title_target = True
                 has_synopsis_target = False
 
@@ -672,7 +856,8 @@ def search_mangaupdates(query: str, limit: int = 6, target_lang: str = "es") -> 
                 has_title_in_target=has_title_target,
                 has_synopsis_in_target=has_synopsis_target,
                 target_title_val=title_es if target.startswith("es") else title,
-                fallback_title_val=title
+                fallback_title_val=title,
+                synopsis_was_translated=synopsis_was_translated
             )
 
             results.append({
@@ -686,11 +871,13 @@ def search_mangaupdates(query: str, limit: int = 6, target_lang: str = "es") -> 
                 "target_lang": target,
                 "has_title_in_language": has_title_target,
                 "has_synopsis_in_language": has_synopsis_target,
+                "synopsis_original": raw_original_synopsis,
+                "synopsis_was_translated": synopsis_was_translated,
                 "language_status": lang_status,
                 "language_notice": lang_notice,
                 "synonyms": associated_titles[:8],
-                "synopsis_es": desc or "",
-                "synopsis_has_es": False,
+                "synopsis_es": chosen_synopsis or "",
+                "synopsis_has_es": bool(chosen_synopsis),
                 "volumes": vols,
                 "chapters": latest_ch,
                 "status": status_code,
@@ -768,21 +955,22 @@ def get_series_online_summary(series_name: str, target_lang: str = "es") -> Dict
         mu_results = search_mangaupdates(cleaned, limit=2, target_lang=target)
         if mu_results:
             top_mu = mu_results[0]
-            summary["official_title"] = top_mu.get("title") or cleaned
-            summary["total_volumes"] = top_mu.get("volumes")
-            summary["total_chapters"] = top_mu.get("chapters")
-            summary["status"] = top_mu.get("status") or "UNKNOWN"
-            summary["status_es"] = top_mu.get("status_es") or "Desconocido"
-            summary["cover_url"] = top_mu.get("cover_url")
-            summary["community_rating"] = top_mu.get("community_rating")
-            summary["publisher"] = top_mu.get("publisher")
-            summary["imprint"] = top_mu.get("imprint")
-            summary["writer"] = top_mu.get("writer")
-            summary["penciller"] = top_mu.get("penciller")
-            summary["tags"] = top_mu.get("tags", [])
-            summary["language_status"] = top_mu.get("language_status", "missing")
-            summary["language_notice"] = top_mu.get("language_notice", "")
-            summary["source"] = "MangaUpdates"
+            if compute_item_similarity(cleaned, top_mu) >= 0.40:
+                summary["official_title"] = top_mu.get("title") or cleaned
+                summary["total_volumes"] = top_mu.get("volumes")
+                summary["total_chapters"] = top_mu.get("chapters")
+                summary["status"] = top_mu.get("status") or "UNKNOWN"
+                summary["status_es"] = top_mu.get("status_es") or "Desconocido"
+                summary["cover_url"] = top_mu.get("cover_url")
+                summary["community_rating"] = top_mu.get("community_rating")
+                summary["publisher"] = top_mu.get("publisher")
+                summary["imprint"] = top_mu.get("imprint")
+                summary["writer"] = top_mu.get("writer")
+                summary["penciller"] = top_mu.get("penciller")
+                summary["tags"] = top_mu.get("tags", [])
+                summary["language_status"] = top_mu.get("language_status", "missing")
+                summary["language_notice"] = top_mu.get("language_notice", "")
+                summary["source"] = "MangaUpdates"
     except Exception as e:
         logger.debug(f"MangaUpdates summary error for '{cleaned}': {e}")
 
@@ -792,24 +980,25 @@ def get_series_online_summary(series_name: str, target_lang: str = "es") -> Dict
             ani_results = search_anilist(cleaned, limit=1, target_lang=target)
             if ani_results:
                 ani = ani_results[0]
-                if summary["total_volumes"] is None and ani.get("volumes"):
-                    summary["total_volumes"] = ani["volumes"]
-                if summary["total_chapters"] is None and ani.get("chapters"):
-                    summary["total_chapters"] = ani["chapters"]
-                if summary["status"] == "UNKNOWN" and ani.get("status"):
-                    summary["status"] = ani.get("status", "UNKNOWN")
-                    summary["status_es"] = ani.get("status_es", "Desconocido")
-                if not summary["cover_url"] and ani.get("cover_url"):
-                    summary["cover_url"] = ani["cover_url"]
-                if not summary["writer"] and ani.get("writer"):
-                    summary["writer"] = ani["writer"]
-                if not summary["penciller"] and ani.get("penciller"):
-                    summary["penciller"] = ani["penciller"]
-                if summary["source"] == "None":
-                    summary["source"] = "AniList"
-                    summary["official_title"] = ani.get("title") or cleaned
-                    summary["language_status"] = ani.get("language_status", "missing")
-                    summary["language_notice"] = ani.get("language_notice", "")
+                if compute_item_similarity(cleaned, ani) >= 0.40:
+                    if summary["total_volumes"] is None and ani.get("volumes"):
+                        summary["total_volumes"] = ani["volumes"]
+                    if summary["total_chapters"] is None and ani.get("chapters"):
+                        summary["total_chapters"] = ani["chapters"]
+                    if summary["status"] == "UNKNOWN" and ani.get("status"):
+                        summary["status"] = ani.get("status", "UNKNOWN")
+                        summary["status_es"] = ani.get("status_es", "Desconocido")
+                    if not summary["cover_url"] and ani.get("cover_url"):
+                        summary["cover_url"] = ani["cover_url"]
+                    if not summary["writer"] and ani.get("writer"):
+                        summary["writer"] = ani["writer"]
+                    if not summary["penciller"] and ani.get("penciller"):
+                        summary["penciller"] = ani["penciller"]
+                    if summary["source"] == "None":
+                        summary["source"] = "AniList"
+                        summary["official_title"] = ani.get("title") or cleaned
+                        summary["language_status"] = ani.get("language_status", "missing")
+                        summary["language_notice"] = ani.get("language_notice", "")
         except Exception as e:
             logger.debug(f"AniList fallback error for '{cleaned}': {e}")
 
@@ -818,44 +1007,45 @@ def get_series_online_summary(series_name: str, target_lang: str = "es") -> Dict
         md_results = search_mangadex(cleaned, limit=1, target_lang=target)
         if md_results:
             md = md_results[0]
-            summary["mangadex_id"] = md.get("id")
-            summary["has_volume_covers"] = True
-            if summary["total_volumes"] is None and md.get("volumes"):
-                try:
-                    summary["total_volumes"] = int(md["volumes"])
-                except Exception:
-                    pass
-            if summary["total_chapters"] is None and md.get("chapters"):
-                try:
-                    summary["total_chapters"] = int(float(md["chapters"]))
-                except Exception:
-                    pass
-            if summary["status"] == "UNKNOWN" and md.get("status"):
-                summary["status"] = md.get("status", "UNKNOWN").upper()
-                summary["status_es"] = md.get("status_es", "Desconocido")
-            if not summary["cover_url"] and md.get("cover_url"):
-                summary["cover_url"] = md["cover_url"]
-            if not summary["writer"] and md.get("writer"):
-                summary["writer"] = md["writer"]
-            if not summary["penciller"] and md.get("penciller"):
-                summary["penciller"] = md["penciller"]
+            if compute_item_similarity(cleaned, md) >= 0.40:
+                summary["mangadex_id"] = md.get("id")
+                summary["has_volume_covers"] = True
+                if summary["total_volumes"] is None and md.get("volumes"):
+                    try:
+                        summary["total_volumes"] = int(md["volumes"])
+                    except Exception:
+                        pass
+                if summary["total_chapters"] is None and md.get("chapters"):
+                    try:
+                        summary["total_chapters"] = int(float(md["chapters"]))
+                    except Exception:
+                        pass
+                if summary["status"] == "UNKNOWN" and md.get("status"):
+                    summary["status"] = md.get("status", "UNKNOWN").upper()
+                    summary["status_es"] = md.get("status_es", "Desconocido")
+                if not summary["cover_url"] and md.get("cover_url"):
+                    summary["cover_url"] = md["cover_url"]
+                if not summary["writer"] and md.get("writer"):
+                    summary["writer"] = md["writer"]
+                if not summary["penciller"] and md.get("penciller"):
+                    summary["penciller"] = md["penciller"]
 
-            # If user wants Spanish and MangaDex has Spanish title or synopsis, elevate language status!
-            if target.startswith("es"):
-                if md.get("has_title_in_language") and md.get("has_synopsis_in_language"):
-                    summary["official_title"] = md.get("title")
-                    summary["language_status"] = "complete"
-                    summary["language_notice"] = "✅ Metadatos completos en Español"
-                elif md.get("has_title_in_language") or md.get("has_synopsis_in_language"):
-                    if md.get("has_title_in_language"):
+                # If user wants Spanish and MangaDex has Spanish title or synopsis, elevate language status!
+                if target.startswith("es"):
+                    if md.get("has_title_in_language") and md.get("has_synopsis_in_language"):
                         summary["official_title"] = md.get("title")
-                    if summary["language_status"] == "missing":
-                        summary["language_status"] = "partial"
-                        summary["language_notice"] = md.get("language_notice")
+                        summary["language_status"] = "complete"
+                        summary["language_notice"] = "✅ Metadatos completos en Español"
+                    elif md.get("has_title_in_language") or md.get("has_synopsis_in_language"):
+                        if md.get("has_title_in_language"):
+                            summary["official_title"] = md.get("title")
+                        if summary["language_status"] == "missing":
+                            summary["language_status"] = "partial"
+                            summary["language_notice"] = md.get("language_notice")
 
-            if summary["source"] == "None":
-                summary["source"] = "MangaDex"
-                summary["official_title"] = md.get("title") or cleaned
+                if summary["source"] == "None":
+                    summary["source"] = "MangaDex"
+                    summary["official_title"] = md.get("title") or cleaned
     except Exception as e:
         logger.debug(f"MangaDex fallback error for '{cleaned}': {e}")
 
@@ -867,7 +1057,7 @@ def get_series_online_summary(series_name: str, target_lang: str = "es") -> Dict
 def unified_online_search(query: str, source: str = "auto", target_lang: str = "es") -> List[Dict[str, Any]]:
     """
     Executes a multi-provider search with user-chosen language prioritization (Spanish by default).
-    Returns rich metadata ready for Komga / ComicRack application.
+    Applies strict relevance filtering to remove unrelated hits and ranks true matches at the top.
     """
     clean_query = query.strip()
     if not clean_query:
@@ -876,42 +1066,81 @@ def unified_online_search(query: str, source: str = "auto", target_lang: str = "
     target = (target_lang or "es").lower()
     combined: List[Dict[str, Any]] = []
 
-    if source in ("auto", "mangaupdates"):
-        combined.extend(search_mangaupdates(clean_query, limit=5, target_lang=target))
+    def fetch_source(src_name: str) -> List[Dict[str, Any]]:
+        try:
+            if src_name == "mangaupdates":
+                return search_mangaupdates(clean_query, limit=6, target_lang=target)
+            elif src_name == "mangadex":
+                return search_mangadex(clean_query, limit=6, target_lang=target)
+            elif src_name == "anilist":
+                return search_anilist(clean_query, limit=6, target_lang=target)
+            elif src_name == "openlibrary":
+                return search_openlibrary(clean_query, limit=4, target_lang=target)
+        except Exception as e:
+            logger.warning(f"Error querying {src_name}: {e}")
+        return []
 
-    if source in ("auto", "mangadex"):
-        combined.extend(search_mangadex(clean_query, limit=6, target_lang=target))
+    sources_to_run = []
+    if source == "auto":
+        sources_to_run = ["mangaupdates", "mangadex", "anilist"]
+    else:
+        sources_to_run = [source]
 
-    if source in ("auto", "anilist"):
-        combined.extend(search_anilist(clean_query, limit=6, target_lang=target))
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=min(4, len(sources_to_run))) as executor:
+        futures = [executor.submit(fetch_source, s) for s in sources_to_run]
+        for f in futures:
+            try:
+                combined.extend(f.result())
+            except Exception as e:
+                logger.warning(f"Future error in unified_online_search: {e}")
 
-    if source in ("auto", "openlibrary") and len(combined) < 4:
+    # Fallback to OpenLibrary if auto search produced few results
+    if source == "auto" and len(combined) < 3:
         combined.extend(search_openlibrary(clean_query, limit=3, target_lang=target))
 
-    # Scoring and sorting: prioritize target language completeness first
-    def score_result(r: Dict[str, Any]) -> int:
-        score = 0
+    # Calculate similarity score for each hit against clean_query
+    for item in combined:
+        item["similarity_score"] = round(compute_item_similarity(clean_query, item), 2)
+
+    # Strict relevance filter:
+    # 0.40 cutoff removes unrelated books/manga returned by loose tags/descriptions.
+    # If no results meet 0.40, relax to 0.25 (to handle slight typos).
+    relevant = [item for item in combined if item.get("similarity_score", 0.0) >= 0.40]
+    if not relevant and combined:
+        relevant = [item for item in combined if item.get("similarity_score", 0.0) >= 0.25]
+    if not relevant:
+        relevant = combined
+
+    # Scoring and sorting: heavily weight title similarity, then language & metadata
+    def rank_result(r: Dict[str, Any]) -> float:
+        sim = r.get("similarity_score", 0.0)
+        score = sim * 100.0
+
+        if sim >= 0.85:
+            score += 30.0
+
         l_stat = r.get("language_status")
         if l_stat == "complete":
-            score += 10
+            score += 15.0
         elif l_stat == "partial":
-            score += 5
+            score += 8.0
 
         if r.get("has_title_in_language"):
-            score += 4
+            score += 6.0
         if r.get("has_synopsis_in_language"):
-            score += 3
+            score += 4.0
         if r.get("volumes") is not None:
-            score += 3
+            score += 4.0
         if r.get("chapters") is not None:
-            score += 2
+            score += 3.0
         if r.get("community_rating") is not None:
-            score += 2
+            score += 2.0
         if r.get("cover_url"):
-            score += 2
+            score += 3.0
         if r.get("provider") == "mangadex" and r.get("has_volume_covers"):
-            score += 1
+            score += 2.0
         return score
 
-    combined.sort(key=score_result, reverse=True)
-    return combined
+    relevant.sort(key=rank_result, reverse=True)
+    return relevant

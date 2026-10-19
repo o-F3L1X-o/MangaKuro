@@ -190,6 +190,9 @@ export interface OnlineSearchResult {
   target_lang?: string;
   has_title_in_language?: boolean;
   has_synopsis_in_language?: boolean;
+  synopsis_original?: string;
+  synopsis_was_translated?: boolean;
+  similarity_score?: number;
   language_status?: 'complete' | 'partial' | 'missing';
   language_notice?: string;
   synonyms: string[];
