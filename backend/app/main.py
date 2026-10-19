@@ -22,6 +22,7 @@ import asyncio
 import shutil
 import tempfile
 import hashlib
+import re
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, Response, Request
@@ -36,12 +37,12 @@ from app.config import (
 )
 from app.services.comic_info import ComicInfoModel
 from app.services.exporter import export_comic, start_background_export, get_export_status
-from app.services.session_manager import session_manager
+from app.services.session_manager import session_manager, resolve_clean_staging_path
 
 app = FastAPI(
     title="MangaKuro • ULTIMATE COMIC & MANGA SUITE",
     description="Gestor web ultra-rápido de CBZ, CBR, PDF y EPUB para Manga, Cómics y Webtoons listo para Komga.",
-    version="1.0.4"
+    version="0.9.5-rc1"
 )
 
 # Enable CORS for local network and dev mode
@@ -311,10 +312,26 @@ async def browse_server_fs(path: Optional[str] = None):
     data_dir = DEFAULT_DATA_DIR
 
     quick_roots = []
-    if export_dir.exists():
-        quick_roots.append({"name": "Biblioteca Komga (Export)", "path": str(export_dir.resolve())})
-    if data_dir.exists():
-        quick_roots.append({"name": "Almacenamiento MangaKuro", "path": str(data_dir.resolve())})
+    if settings.staging_directory:
+        stg = resolve_clean_staging_path(settings.staging_directory)
+        if stg:
+            try:
+                if stg.exists():
+                    quick_roots.append({"name": "Staging Configurado", "path": str(stg.resolve())})
+            except Exception:
+                pass
+
+    try:
+        if export_dir.exists():
+            quick_roots.append({"name": "Biblioteca Komga (Export)", "path": str(export_dir.resolve())})
+    except Exception:
+        pass
+
+    try:
+        if data_dir.exists():
+            quick_roots.append({"name": "Almacenamiento MangaKuro", "path": str(data_dir.resolve())})
+    except Exception:
+        pass
 
     for candidate, label in [
         (Path("/comics_library"), "Biblioteca /comics_library"),
@@ -322,33 +339,61 @@ async def browse_server_fs(path: Optional[str] = None):
         (Path("/media"), "Medios /media"),
         (Path("/mnt"), "Montajes /mnt")
     ]:
-        if candidate.exists() and not any(r["path"] == str(candidate.resolve()) for r in quick_roots):
-            quick_roots.append({"name": label, "path": str(candidate.resolve())})
+        try:
+            if candidate.exists() and not any(r["path"] == str(candidate.resolve()) for r in quick_roots):
+                quick_roots.append({"name": label, "path": str(candidate.resolve())})
+        except Exception:
+            pass
 
     if os.name == "nt":
         for d in "CDEFGHIJKLMNOPQRSTUVWXYZ":
-            drive_path = Path(f"{d}:\\")
-            if drive_path.exists():
-                quick_roots.append({"name": f"Disco {d}:", "path": str(drive_path)})
+            try:
+                drive_path = Path(f"{d}:\\")
+                if drive_path.exists():
+                    quick_roots.append({"name": f"Disco {d}:", "path": str(drive_path)})
+            except Exception:
+                pass
     else:
         if not any(r["path"] == "/" for r in quick_roots):
             quick_roots.append({"name": "Raíz del Sistema (/)", "path": "/"})
 
+    target: Optional[Path] = None
     if not path or not path.strip():
-        target = export_dir if export_dir.exists() else (Path(quick_roots[0]["path"]) if quick_roots else Path.cwd())
+        if settings.staging_directory:
+            stg = resolve_clean_staging_path(settings.staging_directory)
+            if stg and stg.exists():
+                target = stg
+        if not target:
+            target = export_dir if export_dir.exists() else (Path(quick_roots[0]["path"]) if quick_roots else Path.cwd())
     else:
-        target = Path(path.strip())
+        cleaned = resolve_clean_staging_path(path)
+        target = cleaned if cleaned else Path(path.strip())
 
-    if not target.exists() or not target.is_dir():
-        if target.parent.exists() and target.parent.is_dir():
-            target = target.parent
-        elif quick_roots:
+    try:
+        if not target.exists() or not target.is_dir():
+            if target.parent.exists() and target.parent.is_dir():
+                target = target.parent
+            elif quick_roots:
+                target = Path(quick_roots[0]["path"])
+            else:
+                target = Path.cwd()
+    except Exception:
+        if quick_roots:
             target = Path(quick_roots[0]["path"])
         else:
             target = Path.cwd()
 
-    target = target.resolve()
-    parent_path = str(target.parent.resolve()) if target.parent != target else None
+    try:
+        resolved_target = target.resolve()
+    except Exception:
+        resolved_target = target
+
+    parent_path = None
+    try:
+        if target.parent != target and str(target.parent) != str(target):
+            parent_path = str(target.parent)
+    except Exception:
+        parent_path = None
 
     directories = []
     files = []
@@ -360,23 +405,37 @@ async def browse_server_fs(path: Optional[str] = None):
                 continue
             if entry.is_dir():
                 comic_count = 0
+                has_staging = False
                 try:
                     comic_count = sum(1 for sub in entry.iterdir() if sub.is_file() and sub.suffix.lower() in ALLOWED_COMIC_EXTENSIONS)
                 except Exception:
                     pass
+                try:
+                    has_staging = (entry.name.lower() == "staging") or ((entry / "staging").is_dir())
+                except Exception:
+                    pass
+                try:
+                    entry_path_str = str(entry.resolve())
+                except Exception:
+                    entry_path_str = str(entry)
                 directories.append({
                     "name": entry.name,
-                    "path": str(entry.resolve()),
-                    "comic_count": comic_count
+                    "path": entry_path_str,
+                    "comic_count": comic_count,
+                    "has_staging": has_staging
                 })
             elif entry.is_file() and entry.suffix.lower() in ALLOWED_COMIC_EXTENSIONS:
                 try:
                     size_mb = round(entry.stat().st_size / (1024 * 1024), 2)
                 except Exception:
                     size_mb = 0
+                try:
+                    entry_path_str = str(entry.resolve())
+                except Exception:
+                    entry_path_str = str(entry)
                 files.append({
                     "name": entry.name,
-                    "path": str(entry.resolve()),
+                    "path": entry_path_str,
                     "size_mb": size_mb,
                     "extension": entry.suffix.lower()
                 })
@@ -386,7 +445,7 @@ async def browse_server_fs(path: Optional[str] = None):
         raise HTTPException(status_code=500, detail=f"Error al explorar directorio: {e}")
 
     return {
-        "current_path": str(target),
+        "current_path": str(resolved_target),
         "parent_path": parent_path,
         "quick_roots": quick_roots,
         "directories": directories,
@@ -1055,8 +1114,10 @@ async def get_settings():
 @app.post("/api/settings")
 async def set_settings(new_settings: AppSettings):
     save_settings(new_settings)
-    if new_settings.staging_directory:
-        session_manager.staging_dir = Path(new_settings.staging_directory)
+    if new_settings.staging_directory and new_settings.staging_directory.strip():
+        session_manager.staging_dir = resolve_clean_staging_path(new_settings.staging_directory)
+    else:
+        session_manager.staging_dir = None
     return {"success": True, "settings": new_settings}
 
 # --- Frontend Static Files Serving & SPA Fallback ---

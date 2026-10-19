@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { X, Save, Settings as SettingsIcon, CheckCircle2, AlertCircle, Trash2, Sparkles, ShieldCheck, Heart, LogOut } from 'lucide-react';
+import { X, Save, Settings as SettingsIcon, CheckCircle2, AlertCircle, Trash2, Sparkles, ShieldCheck, Heart, LogOut, FolderOpen } from 'lucide-react';
 import { AppSettings } from '../types';
 import { saveSettings, cleanupAllStaging, cleanupOrphanedStaging, logoutAuth } from '../api';
 import { APP_VERSION, DEFAULT_DONATION_URL } from '../version';
 import { useTranslation } from '../i18n';
+import { DirectoryPickerModal } from './DirectoryPickerModal';
 
 interface SettingsModalProps {
   settings: AppSettings;
@@ -30,6 +31,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [cleanupMessage, setCleanupMessage] = useState<string | null>(null);
+  const [isPickerOpen, setIsPickerOpen] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -160,9 +162,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <div className="space-y-4">
                 {/* Staging Storage Path */}
                 <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-comic-950/60 border border-slate-200 dark:border-comic-800 space-y-1.5 shadow-sm">
-                  <label className="block text-xs font-bold text-slate-900 dark:text-slate-200">
-                    {t('settings.stagingPath')}
-                  </label>
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-bold text-slate-900 dark:text-slate-200">
+                      {t('settings.stagingPath')}
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setIsPickerOpen(true)}
+                      className="px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/80 dark:hover:bg-indigo-900/80 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800 text-[11px] font-semibold flex items-center gap-1.5 transition active:scale-95 shadow-2xs"
+                      title={t('settings.stagingPickerTitle') || 'Explorar carpetas'}
+                    >
+                      <FolderOpen className="w-3.5 h-3.5" />
+                      <span>{t('settings.browseBtn') || 'Explorar'}</span>
+                    </button>
+                  </div>
                   <input
                     type="text"
                     value={formData.staging_directory || ''}
@@ -410,6 +423,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
         </form>
       </div>
+
+      <DirectoryPickerModal
+        isOpen={isPickerOpen}
+        initialPath={formData.staging_directory}
+        title={t('settings.stagingPickerTitle') || 'Explorar Carpeta de Staging'}
+        onSelect={(path) => {
+          setFormData({ ...formData, staging_directory: path });
+        }}
+        onClose={() => setIsPickerOpen(false)}
+      />
     </div>
   );
 };

@@ -151,6 +151,7 @@ export interface ServerFsEntry {
   size_mb?: number;
   comic_count?: number;
   extension?: string;
+  has_staging?: boolean;
 }
 
 export interface QuickRoot {

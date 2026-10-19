@@ -85,11 +85,15 @@ class SessionManifest(BaseModel):
 def resolve_clean_staging_path(raw_path: Any) -> Optional[Path]:
     if not raw_path:
         return None
-    s = str(raw_path).strip()
+    s = str(raw_path).strip().strip('"').strip("'").strip()
     if not s:
         return None
     # Fix accidental space between drive letter and backslash e.g. "E: \something" -> "E:\something"
     s = re.sub(r'^([a-zA-Z]:)\s*[/\\]', r'\1\\', s)
+    # Fix forward slashes on Windows UNC paths: "//server/share" -> "\\server\share"
+    import os
+    if os.name == "nt" and s.startswith("//"):
+        s = "\\\\" + s[2:].replace("/", "\\")
     return Path(s)
 
 class SessionManager:
