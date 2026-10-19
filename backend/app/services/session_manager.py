@@ -321,17 +321,23 @@ class SessionManager:
                         pass
                 else:
                     # Valid session: check for unreferenced images & thumbnails
-                    referenced_files = {"manifest.json"}
+                    referenced_files = {
+                        "manifest.json",
+                        "comicinfo.xml",
+                        "ComicInfo.xml"
+                    }
                     if manifest_pages:
                         for p in manifest_pages:
                             fn = p.get("filename")
                             if fn:
                                 referenced_files.add(fn)
+                                referenced_files.add(fn.lower())
                                 referenced_files.add(f"images/{fn}")
                                 referenced_files.add(f"images\\{fn}")
                             th = p.get("thumb_filename")
                             if th:
                                 referenced_files.add(th)
+                                referenced_files.add(th.lower())
                                 referenced_files.add(f"thumbnails/{th}")
                                 referenced_files.add(f"thumbnails\\{th}")
 
@@ -343,8 +349,18 @@ class SessionManager:
                                     staging_bytes += fsize
                                     rel = str(f.relative_to(sdir)).replace("\\", "/")
                                     fname = f.name
-                                    if fname not in referenced_files and rel not in referenced_files and rel != "manifest.json":
-                                        orphaned_items.append((f, "file", fsize))
+                                    fname_lower = fname.lower()
+                                    if (
+                                        fname in referenced_files or
+                                        fname_lower in referenced_files or
+                                        rel in referenced_files or
+                                        fname_lower == "manifest.json" or
+                                        fname_lower == "comicinfo.xml" or
+                                        fname.startswith("backup_") or
+                                        fname.startswith(".cover_")
+                                    ):
+                                        continue
+                                    orphaned_items.append((f, "file", fsize))
                                 except Exception:
                                     pass
                     except Exception:
