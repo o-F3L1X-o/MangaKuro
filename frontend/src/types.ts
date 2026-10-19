@@ -181,7 +181,7 @@ export interface AuthStatusResult {
 
 export interface OnlineSearchResult {
   id: string;
-  provider: 'mangadex' | 'anilist' | 'mangaupdates' | 'kitsu' | 'bangumi' | 'openlibrary';
+  provider: 'listadomanga' | 'mangadex' | 'anilist' | 'mangaupdates' | 'kitsu' | 'bangumi' | 'openlibrary';
   provider_label: string;
   title: string;
   title_spanish?: string;
@@ -221,6 +221,8 @@ export interface VolumeCoverItem {
   cover_url: string;
   cover_url_full?: string;
   description?: string;
+  locale?: string;
+  locale_label?: string;
 }
 
 export interface SeriesOnlineSummary {

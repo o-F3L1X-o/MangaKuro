@@ -890,11 +890,18 @@ export async function searchOnlineManga(query: string, source: string = 'auto', 
   return data.results || [];
 }
 
-export async function fetchMangaDexVolumeCovers(mangaId: string): Promise<VolumeCoverItem[]> {
-  const res = await fetch(`${API_BASE}/search/mangadex/${mangaId}/covers`);
+export async function fetchVolumeCovers(provider: string, itemId: string): Promise<VolumeCoverItem[]> {
+  const endpoint = provider === 'mangadex'
+    ? `${API_BASE}/search/mangadex/${itemId}/covers`
+    : `${API_BASE}/search/covers/${provider}/${itemId}`;
+  const res = await fetch(endpoint);
   if (!res.ok) throw new Error('Error al cargar portadas de tomos');
   const data = await res.json();
   return data.covers || [];
+}
+
+export async function fetchMangaDexVolumeCovers(mangaId: string): Promise<VolumeCoverItem[]> {
+  return fetchVolumeCovers('mangadex', mangaId);
 }
 
 export async function applyOnlineCover(

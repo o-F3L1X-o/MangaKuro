@@ -7,6 +7,8 @@ import urllib.request
 import difflib
 import unicodedata
 import concurrent.futures
+import time
+import html
 from typing import List, Dict, Any, Optional, Tuple
 
 logger = logging.getLogger("online_search")
@@ -16,23 +18,43 @@ HEADERS = {
     "Accept": "application/json"
 }
 
-_TRANSLATION_CACHE: Dict[str, str] = {}
+_TRANSLATION_CACHE: Dict[str, Tuple[str, bool]] = {}
 _TRANSLATION_LOCK = threading.Lock()
 
-def translate_to_language(text: str, target_lang: str = "es") -> str:
+def is_text_spanish(text: str) -> bool:
+    """Detects if text contains meaningful Spanish vocabulary or accents."""
+    if not text:
+        return False
+    spanish_words = {
+        "el", "la", "los", "las", "un", "una", "unos", "unas", "de", "del",
+        "en", "para", "por", "con", "su", "sus", "como", "que", "pero",
+        "más", "este", "esta", "estos", "estas", "fue", "era", "hijo",
+        "padre", "madre", "hermano", "vida", "mundo", "historia", "cuando",
+        "sin", "sobre", "también", "después", "donde", "quien", "todo", "todos"
+    }
+    t = text.lower()
+    words = re.findall(r"\b[a-záéíóúñ]+\b", t)
+    if not words:
+        return False
+    match_count = sum(1 for w in words if w in spanish_words)
+    accent_count = len(re.findall(r"[áéíóúñ¿¡]", t))
+    ratio = match_count / len(words)
+    return match_count >= 3 or accent_count >= 2 or ratio >= 0.10
+
+def translate_to_language_with_status(text: str, target_lang: str = "es") -> Tuple[str, bool]:
     """
-    Translates text to target language using Google Translate free endpoints with fallback.
-    Maintains an in-memory cache and splits into safe paragraph chunks.
-    Falls back gracefully to the original text if offline or unreachable.
+    Translates text with multi-engine fallback and strictly verifies if the result
+    was actually translated into the target language.
+    Returns (translated_text, was_translated: bool).
     """
     if not text or not text.strip():
-        return ""
+        return ("", False)
 
     clean = re.sub(r"<br\s*/?>", "\n", text)
     clean = re.sub(r"<.*?>", "", clean)
     clean = re.sub(r"\[.*?\]\(.*?\)", "", clean).strip()
     if not clean:
-        return ""
+        return ("", False)
 
     target = (target_lang or "es").lower()
     if target in ("es", "es-la", "es-es"):
@@ -44,16 +66,21 @@ def translate_to_language(text: str, target_lang: str = "es") -> str:
     else:
         tl = target
 
+    # If target is Spanish and the text is already Spanish, no need to translate
+    if tl == "es" and is_text_spanish(clean):
+        return (clean, True)
+
     cache_key = f"{tl}:{hash(clean)}"
     with _TRANSLATION_LOCK:
         if cache_key in _TRANSLATION_CACHE:
-            return _TRANSLATION_CACHE[cache_key]
+            cached_val, cached_status = _TRANSLATION_CACHE[cache_key]
+            return (cached_val, cached_status)
 
     paragraphs = clean.split("\n")
     chunks = []
     current_chunk = ""
     for p in paragraphs:
-        if len(current_chunk) + len(p) < 1200:
+        if len(current_chunk) + len(p) < 800:
             current_chunk += ("\n" if current_chunk else "") + p
         else:
             if current_chunk:
@@ -62,45 +89,81 @@ def translate_to_language(text: str, target_lang: str = "es") -> str:
     if current_chunk:
         chunks.append(current_chunk)
 
+    trans_headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Referer": "https://translate.google.com/"
+    }
+
     translated_chunks = []
+    any_chunk_translated = False
+
     for chunk in chunks[:4]:
-        success = False
-        # Endpoint 1: Google GTX
+        chunk_success = False
+
+        # Endpoint 1: Google GTX with Referer and Chrome UA
         try:
             url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl={tl}&dt=t&q=" + urllib.parse.quote(chunk)
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            req = urllib.request.Request(url, headers=trans_headers)
             with urllib.request.urlopen(req, timeout=4) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 res_text = "".join([seg[0] for seg in data[0] if seg and seg[0]])
-                if res_text:
+                if res_text and (tl != "es" or is_text_spanish(res_text)):
                     translated_chunks.append(res_text)
-                    success = True
+                    chunk_success = True
+                    any_chunk_translated = True
         except Exception as e:
             logger.debug(f"GTX translation chunk error: {e}")
 
-        # Endpoint 2 Fallback: dict-chrome-ex
-        if not success:
+        # Endpoint 2: MyMemory API (Reliable public translation engine)
+        if not chunk_success:
+            try:
+                sub_q = chunk[:450]
+                url_mm = f"https://api.mymemory.translated.net/get?q={urllib.parse.quote(sub_q)}&langpair=auto|{tl}"
+                req_mm = urllib.request.Request(url_mm, headers=trans_headers)
+                with urllib.request.urlopen(req_mm, timeout=4) as resp_mm:
+                    data_mm = json.loads(resp_mm.read().decode("utf-8"))
+                    res_mm = data_mm.get("responseData", {}).get("translatedText")
+                    if res_mm and (tl != "es" or is_text_spanish(res_mm)):
+                        translated_chunks.append(res_mm)
+                        chunk_success = True
+                        any_chunk_translated = True
+            except Exception as e_mm:
+                logger.debug(f"MyMemory translation chunk error: {e_mm}")
+
+        # Endpoint 3: Google Chrome-ex
+        if not chunk_success:
             try:
                 url2 = f"https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=auto&tl={tl}&q=" + urllib.parse.quote(chunk)
-                req2 = urllib.request.Request(url2, headers={"User-Agent": "Mozilla/5.0"})
+                req2 = urllib.request.Request(url2, headers=trans_headers)
                 with urllib.request.urlopen(req2, timeout=4) as resp2:
                     data2 = json.loads(resp2.read().decode("utf-8"))
                     if isinstance(data2, list) and data2:
                         res_text = data2[0] if isinstance(data2[0], str) else "".join(data2)
-                        translated_chunks.append(res_text)
-                        success = True
+                        if res_text and (tl != "es" or is_text_spanish(res_text)):
+                            translated_chunks.append(res_text)
+                            chunk_success = True
+                            any_chunk_translated = True
             except Exception as e2:
                 logger.debug(f"Chrome-ex translation chunk error: {e2}")
 
-        if not success:
+        if not chunk_success:
             translated_chunks.append(chunk)
 
     result = "\n\n".join(translated_chunks).strip()
+    was_translated = any_chunk_translated and (tl != "es" or is_text_spanish(result))
+
     with _TRANSLATION_LOCK:
         if len(_TRANSLATION_CACHE) > 500:
             _TRANSLATION_CACHE.clear()
-        _TRANSLATION_CACHE[cache_key] = result
-    return result
+        if was_translated:
+            _TRANSLATION_CACHE[cache_key] = (result, True)
+
+    return (result if was_translated else clean, was_translated)
+
+def translate_to_language(text: str, target_lang: str = "es") -> str:
+    """Translates text and returns the result string."""
+    res, _ = translate_to_language_with_status(text, target_lang)
+    return res
 
 def normalize_text(text: str) -> str:
     if not text:
@@ -131,13 +194,13 @@ def compute_title_similarity(query: str, title: str) -> float:
     t_set = set(t_words)
 
     # Substring containment
-    if q_norm in t_norm:
+    if len(q_norm) >= 3 and q_norm in t_norm:
         coverage = len(q_norm) / len(t_norm)
         if coverage >= 0.70:
             return 0.85 + (coverage - 0.70) * 0.50
         return 0.55 + coverage * 0.35
 
-    if t_norm in q_norm:
+    if len(t_norm) >= 3 and re.search(r'\b' + re.escape(t_norm) + r'\b', q_norm):
         coverage = len(t_norm) / len(q_norm)
         return 0.60 + coverage * 0.35
 
@@ -347,14 +410,15 @@ def search_mangadex(query: str, limit: int = 8, target_lang: str = "es") -> List
                     chosen_synopsis = desc_es
                     has_synopsis_target = True
                 elif desc_en:
-                    translated = translate_to_language(desc_en, "es")
-                    if translated and translated != desc_en:
+                    translated, was_trans = translate_to_language_with_status(desc_en, "es")
+                    if was_trans:
                         chosen_synopsis = translated
                         synopsis_was_translated = True
                         has_synopsis_target = True
                     else:
                         chosen_synopsis = desc_en
-                        has_synopsis_target = False
+                        synopsis_was_translated = False
+                        has_synopsis_target = is_text_spanish(desc_en)
                 else:
                     chosen_synopsis = ""
                     has_synopsis_target = False
@@ -468,8 +532,8 @@ def search_mangadex(query: str, limit: int = 8, target_lang: str = "es") -> List
 
     return results
 
-def get_mangadex_volume_covers(manga_id: str, limit: int = 36) -> List[Dict[str, Any]]:
-    """Fetches volume-specific covers for a MangaDex manga ID."""
+def get_mangadex_volume_covers(manga_id: str, limit: int = 48) -> List[Dict[str, Any]]:
+    """Fetches volume-specific covers for a MangaDex manga ID with locale labels."""
     covers = []
     try:
         url = f"https://api.mangadex.org/cover?manga[]={manga_id}&limit={limit}&order[volume]=asc"
@@ -478,21 +542,248 @@ def get_mangadex_volume_covers(manga_id: str, limit: int = 36) -> List[Dict[str,
             data = json.loads(resp.read().decode("utf-8")).get("data", [])
 
         for c in data:
-            fn = c.get("attributes", {}).get("fileName")
-            vol = c.get("attributes", {}).get("volume")
-            desc = c.get("attributes", {}).get("description")
+            attrs = c.get("attributes", {})
+            fn = attrs.get("fileName")
+            vol = attrs.get("volume")
+            desc = attrs.get("description")
+            locale = attrs.get("locale") or ""
+
+            locale_label = ""
+            if locale in ("es", "es-la"):
+                locale_label = "🇪🇸 Español"
+            elif locale in ("en", "en-us"):
+                locale_label = "🇺🇸 English"
+            elif locale == "ja":
+                locale_label = "🇯🇵 Japonés"
+            elif locale:
+                locale_label = f"🌐 {locale.upper()}"
+
             if fn:
                 covers.append({
                     "volume": f"Tomo {vol}" if vol else "Portada Alternativa",
                     "volume_number": vol,
                     "cover_url": f"https://uploads.mangadex.org/covers/{manga_id}/{fn}.512.jpg",
                     "cover_url_full": f"https://uploads.mangadex.org/covers/{manga_id}/{fn}",
-                    "description": desc or ""
+                    "description": desc or "",
+                    "locale": locale,
+                    "locale_label": locale_label
                 })
     except Exception as e:
         logger.warning(f"Error fetching MangaDex volume covers for {manga_id}: {e}")
 
     return covers
+
+# --- ListadoManga (Spain Licensed Manga Database) ---
+
+_LISTADOMANGA_INDEX_CACHE: List[Tuple[str, str]] = []
+_LISTADOMANGA_INDEX_TIME: float = 0.0
+_LISTADOMANGA_INDEX_LOCK = threading.Lock()
+
+def get_listadomanga_index() -> List[Tuple[str, str]]:
+    """Fetches and caches the index of licensed Spanish manga from ListadoManga (3,400+ series)."""
+    global _LISTADOMANGA_INDEX_CACHE, _LISTADOMANGA_INDEX_TIME
+    with _LISTADOMANGA_INDEX_LOCK:
+        now = time.time()
+        # Cache for 12 hours
+        if _LISTADOMANGA_INDEX_CACHE and (now - _LISTADOMANGA_INDEX_TIME) < 43200:
+            return _LISTADOMANGA_INDEX_CACHE
+
+        try:
+            req = urllib.request.Request("https://www.listadomanga.es/lista.php", headers=HEADERS)
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                page = resp.read().decode("utf-8", errors="ignore")
+
+            items = re.findall(r'<a\s+href=["\'](?:/)?coleccion\.php\?id=(\d+)["\'][^>]*>(.*?)</a>', page)
+            clean_items = [(cid, html.unescape(t).strip()) for cid, t in items if cid and t]
+            if clean_items:
+                _LISTADOMANGA_INDEX_CACHE = clean_items
+                _LISTADOMANGA_INDEX_TIME = now
+                logger.info(f"Loaded {len(_LISTADOMANGA_INDEX_CACHE)} series from ListadoManga index")
+        except Exception as e:
+            logger.warning(f"Error fetching ListadoManga index: {e}")
+
+        return _LISTADOMANGA_INDEX_CACHE
+
+_LISTADOMANGA_COVERS_CACHE: Dict[str, List[Dict[str, Any]]] = {}
+_LISTADOMANGA_COVERS_LOCK = threading.Lock()
+
+def parse_listadomanga_collection(cid: str) -> Optional[Dict[str, Any]]:
+    """Parses a ListadoManga collection page for Spanish edition details, covers and metadata."""
+    try:
+        url = f"https://www.listadomanga.es/coleccion.php?id={cid}"
+        req = urllib.request.Request(url, headers=HEADERS)
+        with urllib.request.urlopen(req, timeout=7) as resp:
+            page = html.unescape(resp.read().decode("utf-8", errors="ignore"))
+
+        t_m = re.search(r"<h1[^>]*>(.*?)</h1>", page, re.DOTALL)
+        title = t_m.group(1).strip() if t_m else ""
+
+        orig_m = re.search(r"Título original:[^<]*</b>\s*([^<]+)<", page, re.IGNORECASE)
+        orig_title = orig_m.group(1).strip() if orig_m else ""
+
+        guion_m = re.search(r"Guion:[^<]*</b>\s*<a[^>]*>([^<]+)</a>", page, re.IGNORECASE)
+        writer = guion_m.group(1).strip() if guion_m else ""
+
+        dibujo_m = re.search(r"Dibujo:[^<]*</b>\s*<a[^>]*>([^<]+)</a>", page, re.IGNORECASE)
+        penciller = dibujo_m.group(1).strip() if dibujo_m else ""
+
+        pub_m = re.search(r"Editorial española:[^<]*</b>\s*<a[^>]*>([^<]+)</a>", page, re.IGNORECASE)
+        publisher = pub_m.group(1).strip() if pub_m else ""
+
+        orig_pub_m = re.search(r"Editorial japonesa:[^<]*</b>\s*<a[^>]*>([^<]+)</a>", page, re.IGNORECASE)
+        orig_publisher = orig_pub_m.group(1).strip() if orig_pub_m else ""
+
+        formato_m = re.search(r"Formato:[^<]*</b>\s*([^<]+)<", page, re.IGNORECASE)
+        formato = formato_m.group(1).strip() if formato_m else ""
+
+        vols_m = re.search(r"Números en (?:castellano|español|japonés):[^<]*</b>\s*([^<]+)<", page, re.IGNORECASE)
+        vols_text = vols_m.group(1).strip() if vols_m else ""
+
+        vol_count = None
+        vm = re.search(r"(\d+)", vols_text)
+        if vm:
+            vol_count = int(vm.group(1))
+
+        status_es = "En emisión"
+        status_code = "RELEASING"
+        if "completa" in vols_text.lower() or "finalizad" in vols_text.lower():
+            status_es = "Finalizado"
+            status_code = "FINISHED"
+
+        synopsis = ""
+        syn_m = re.search(r"<h2>Sinopsis de [^<]+</h2>\s*<hr\s*/?>\s*(.*?)(?:</td>|</table>|<br\s*/?>\s*<table)", page, re.DOTALL | re.IGNORECASE)
+        if syn_m:
+            synopsis = re.sub(r"<.*?>", "", syn_m.group(1)).strip()
+
+        # Parse volume covers
+        matches = re.finditer(
+            r'<img[^>]+(?:data-portada=["\']([^"\']+)["\']|src=["\'](https://static\.listadomanga\.com/[a-f0-9]+\.jpg)["\'])[^>]*>.*?<div style="height: 8px"></div>\s*([^<]+)',
+            page,
+            re.DOTALL | re.IGNORECASE
+        )
+
+        covers = []
+        for m in matches:
+            img_val = m.group(1) or m.group(2)
+            img_url = f"https://static.listadomanga.com/{img_val}" if not img_val.startswith("http") else img_val
+            vol_text = m.group(3).strip()
+            num_m = re.search(r"n[ºo°#]?\s*(\d+)", vol_text, re.IGNORECASE)
+            vol_num = num_m.group(1) if num_m else None
+            covers.append({
+                "volume": f"Tomo {vol_num}" if vol_num else vol_text,
+                "volume_number": vol_num,
+                "cover_url": img_url,
+                "cover_url_full": img_url,
+                "description": f"{title} {vol_text}",
+                "locale": "es",
+                "locale_label": "🇪🇸 España (Ed. Oficial)"
+            })
+
+        main_cover = covers[0]["cover_url"] if covers else None
+        for c in covers:
+            if c.get("volume_number") == "1":
+                main_cover = c["cover_url"]
+                break
+
+        authors = []
+        if writer:
+            authors.append(writer)
+        if penciller and penciller not in authors:
+            authors.append(penciller)
+
+        genres = ["Manga"]
+        if "shonen" in formato.lower() or "shônen" in page.lower():
+            genres.append("Shōnen")
+        elif "seinen" in page.lower():
+            genres.append("Seinen")
+        elif "shojo" in page.lower() or "shôjo" in page.lower():
+            genres.append("Shōjo")
+
+        return {
+            "id": str(cid),
+            "provider": "listadomanga",
+            "provider_label": "ListadoManga (Edición España)",
+            "title": title,
+            "title_spanish": title,
+            "title_english": None,
+            "title_romaji": orig_title or None,
+            "target_lang": "es",
+            "has_title_in_language": True,
+            "has_synopsis_in_language": bool(synopsis),
+            "synopsis_original": synopsis,
+            "synopsis_was_translated": False,
+            "language_status": "complete" if synopsis else "partial",
+            "language_notice": "✅ Edición oficial española (Norma, Ivrea, Panini...)" if synopsis else "🇪🇸 Edición oficial española",
+            "synonyms": [orig_title] if orig_title else [],
+            "synopsis_es": synopsis,
+            "synopsis_has_es": bool(synopsis),
+            "volumes": vol_count,
+            "chapters": None,
+            "status": status_code,
+            "status_es": status_es,
+            "year": None,
+            "genres": genres,
+            "tags": genres,
+            "authors": authors,
+            "writer": writer,
+            "penciller": penciller,
+            "publisher": publisher,
+            "imprint": orig_publisher,
+            "cover_url": main_cover,
+            "has_volume_covers": bool(covers),
+            "covers_cache": covers
+        }
+    except Exception as e:
+        logger.warning(f"Error parsing ListadoManga collection {cid}: {e}")
+        return None
+
+def get_listadomanga_volume_covers(collection_id: str) -> List[Dict[str, Any]]:
+    """Fetches all Spanish volume covers from ListadoManga for a collection ID."""
+    with _LISTADOMANGA_COVERS_LOCK:
+        if collection_id in _LISTADOMANGA_COVERS_CACHE:
+            return _LISTADOMANGA_COVERS_CACHE[collection_id]
+
+    data = parse_listadomanga_collection(collection_id)
+    covers = data.get("covers_cache", []) if data else []
+
+    with _LISTADOMANGA_COVERS_LOCK:
+        _LISTADOMANGA_COVERS_CACHE[collection_id] = covers
+
+    return covers
+
+def search_listadomanga(query: str, limit: int = 4, target_lang: str = "es") -> List[Dict[str, Any]]:
+    """
+    Searches ListadoManga (the definitive Spanish licensed manga database) for official Spanish editions,
+    publishers (Norma Editorial, Panini, Ivrea, Planeta), and official Spanish volume covers.
+    """
+    index = get_listadomanga_index()
+    if not index:
+        return []
+
+    clean_q = clean_series_name(query).strip()
+    if not clean_q:
+        clean_q = query.strip()
+
+    scored = []
+    for cid, t in index:
+        sim = compute_title_similarity(clean_q, t)
+        if sim >= 0.40:
+            scored.append((sim, cid, t))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    top_candidates = scored[:limit]
+
+    results = []
+    for sim, cid, t in top_candidates:
+        parsed = parse_listadomanga_collection(cid)
+        if parsed:
+            if parsed.get("covers_cache"):
+                with _LISTADOMANGA_COVERS_LOCK:
+                    _LISTADOMANGA_COVERS_CACHE[cid] = parsed["covers_cache"]
+                del parsed["covers_cache"]
+            results.append(parsed)
+
+    return results
 
 def search_anilist(query: str, limit: int = 6, target_lang: str = "es") -> List[Dict[str, Any]]:
     """
@@ -604,14 +895,15 @@ def search_anilist(query: str, limit: int = 6, target_lang: str = "es") -> List[
                 chosen_title = title_es or english or romaji or user_pref
                 has_title_target = bool(title_es)
                 if raw_desc:
-                    translated = translate_to_language(raw_desc, "es")
-                    if translated and translated != raw_desc:
+                    translated, was_trans = translate_to_language_with_status(raw_desc, "es")
+                    if was_trans:
                         chosen_synopsis = translated
                         synopsis_was_translated = True
                         has_synopsis_target = True
                     else:
                         chosen_synopsis = raw_desc
-                        has_synopsis_target = False
+                        synopsis_was_translated = False
+                        has_synopsis_target = is_text_spanish(raw_desc)
                 else:
                     chosen_synopsis = ""
                     has_synopsis_target = False
@@ -781,14 +1073,15 @@ def search_kitsu(query: str, limit: int = 6, target_lang: str = "es") -> List[Di
                 chosen_title = title_en or canonical_title
                 has_title_target = False
                 if raw_desc:
-                    translated = translate_to_language(raw_desc, "es")
-                    if translated and translated != raw_desc:
+                    translated, was_trans = translate_to_language_with_status(raw_desc, "es")
+                    if was_trans:
                         chosen_synopsis = translated
                         synopsis_was_translated = True
                         has_synopsis_target = True
                     else:
                         chosen_synopsis = raw_desc
-                        has_synopsis_target = False
+                        synopsis_was_translated = False
+                        has_synopsis_target = is_text_spanish(raw_desc)
                 else:
                     chosen_synopsis = ""
                     has_synopsis_target = False
@@ -886,14 +1179,15 @@ def search_bangumi(query: str, limit: int = 5, target_lang: str = "es") -> List[
                 chosen_title = name or name_cn
                 has_title_target = False
                 if raw_summary:
-                    translated = translate_to_language(raw_summary, "es")
-                    if translated and translated != raw_summary:
+                    translated, was_trans = translate_to_language_with_status(raw_summary, "es")
+                    if was_trans:
                         chosen_synopsis = translated
                         synopsis_was_translated = True
                         has_synopsis_target = True
                     else:
                         chosen_synopsis = raw_summary
-                        has_synopsis_target = False
+                        synopsis_was_translated = False
+                        has_synopsis_target = is_text_spanish(raw_summary)
                 else:
                     chosen_synopsis = ""
                     has_synopsis_target = False
@@ -1097,14 +1391,15 @@ def search_mangaupdates(query: str, limit: int = 6, target_lang: str = "es") -> 
                 chosen_title = title_es or title
                 has_title_target = bool(title_es)
                 if desc:
-                    translated = translate_to_language(desc, "es")
-                    if translated and translated != desc:
+                    translated, was_trans = translate_to_language_with_status(desc, "es")
+                    if was_trans:
                         chosen_synopsis = translated
                         synopsis_was_translated = True
                         has_synopsis_target = True
                     else:
                         chosen_synopsis = desc
-                        has_synopsis_target = False
+                        synopsis_was_translated = False
+                        has_synopsis_target = is_text_spanish(desc)
                 else:
                     chosen_synopsis = ""
                     has_synopsis_target = False
@@ -1217,6 +1512,31 @@ def get_series_online_summary(series_name: str, target_lang: str = "es") -> Dict
         "language_status": "missing",
         "language_notice": "Búsqueda en curso..."
     }
+
+    # 0. Primary Spanish Source: ListadoManga (Spain official licensed editions)
+    if target.startswith("es"):
+        try:
+            lm_results = search_listadomanga(cleaned, limit=1, target_lang=target)
+            if lm_results:
+                top_lm = lm_results[0]
+                if compute_item_similarity(cleaned, top_lm) >= 0.40:
+                    summary["official_title"] = top_lm.get("title") or cleaned
+                    summary["total_volumes"] = top_lm.get("volumes")
+                    summary["status"] = top_lm.get("status") or "UNKNOWN"
+                    summary["status_es"] = top_lm.get("status_es") or "Desconocido"
+                    summary["cover_url"] = top_lm.get("cover_url")
+                    summary["publisher"] = top_lm.get("publisher")
+                    summary["imprint"] = top_lm.get("imprint")
+                    summary["writer"] = top_lm.get("writer")
+                    summary["penciller"] = top_lm.get("penciller")
+                    summary["tags"] = top_lm.get("tags", [])
+                    summary["language_status"] = top_lm.get("language_status", "complete")
+                    summary["language_notice"] = top_lm.get("language_notice", "")
+                    summary["source"] = "ListadoManga (España)"
+                    if top_lm.get("has_volume_covers"):
+                        summary["has_volume_covers"] = True
+        except Exception as e:
+            logger.debug(f"ListadoManga summary error for '{cleaned}': {e}")
 
     # 1. Primary Source: MangaUpdates (best for volume counts, publisher, rating, author roles)
     try:
@@ -1336,7 +1656,9 @@ def unified_online_search(query: str, source: str = "auto", target_lang: str = "
 
     def fetch_source(src_name: str) -> List[Dict[str, Any]]:
         try:
-            if src_name == "mangaupdates":
+            if src_name in ("listadomanga", "listadomanga.es"):
+                return search_listadomanga(clean_query, limit=4, target_lang=target)
+            elif src_name == "mangaupdates":
                 return search_mangaupdates(clean_query, limit=6, target_lang=target)
             elif src_name == "mangadex":
                 return search_mangadex(clean_query, limit=6, target_lang=target)
@@ -1354,7 +1676,10 @@ def unified_online_search(query: str, source: str = "auto", target_lang: str = "
 
     sources_to_run = []
     if source == "auto":
-        sources_to_run = ["mangaupdates", "mangadex", "anilist", "kitsu"]
+        if target.startswith("es"):
+            sources_to_run = ["listadomanga", "mangaupdates", "mangadex", "anilist", "kitsu"]
+        else:
+            sources_to_run = ["mangaupdates", "mangadex", "anilist", "kitsu"]
     else:
         sources_to_run = [source]
 
@@ -1392,6 +1717,10 @@ def unified_online_search(query: str, source: str = "auto", target_lang: str = "
         if sim >= 0.85:
             score += 30.0
 
+        # High priority bonus for Spanish editions from ListadoManga when searching in Spanish
+        if r.get("provider") == "listadomanga" and target.startswith("es"):
+            score += 25.0
+
         l_stat = r.get("language_status")
         if l_stat == "complete":
             score += 15.0
@@ -1410,8 +1739,8 @@ def unified_online_search(query: str, source: str = "auto", target_lang: str = "
             score += 2.0
         if r.get("cover_url"):
             score += 3.0
-        if r.get("provider") == "mangadex" and r.get("has_volume_covers"):
-            score += 2.0
+        if r.get("has_volume_covers"):
+            score += 3.0
         return score
 
     relevant.sort(key=rank_result, reverse=True)

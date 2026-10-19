@@ -1018,6 +1018,22 @@ async def get_mangadex_covers_endpoint(manga_id: str):
         logger.error(f"Error in mangadex covers: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/search/covers/{provider}/{item_id}")
+async def get_provider_covers_endpoint(provider: str, item_id: str):
+    """Fetches volume-specific covers for any provider (e.g. 'mangadex', 'listadomanga')."""
+    from app.services.online_search import get_mangadex_volume_covers, get_listadomanga_volume_covers
+    try:
+        if provider == "mangadex":
+            covers = await asyncio.to_thread(get_mangadex_volume_covers, item_id)
+        elif provider in ("listadomanga", "listadomanga.es"):
+            covers = await asyncio.to_thread(get_listadomanga_volume_covers, item_id)
+        else:
+            covers = []
+        return {"covers": covers, "count": len(covers), "provider": provider}
+    except Exception as e:
+        logger.error(f"Error in {provider} covers for {item_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/session/{session_id}/apply-online-cover")
 async def apply_online_cover_endpoint(session_id: str, req: ApplyOnlineCoverRequest):
     """Downloads an external cover image and sets it as session cover (inserting as page #1 or replacing page #1)."""
@@ -1036,11 +1052,11 @@ async def apply_online_cover_endpoint(session_id: str, req: ApplyOnlineCoverRequ
 
 @app.post("/api/online/translate")
 async def translate_text_endpoint(req: TranslateTextRequest):
-    """Translates a text (e.g. synopsis) to target language (default Spanish)."""
-    from app.services.online_search import translate_to_language
+    """Translates a text (e.g. synopsis) to target language (default Spanish) with verification."""
+    from app.services.online_search import translate_to_language_with_status
     try:
-        translated = await asyncio.to_thread(translate_to_language, text=req.text, target_lang=req.target_lang)
-        return {"translated": translated, "original": req.text, "success": bool(translated and translated != req.text)}
+        translated, success = await asyncio.to_thread(translate_to_language_with_status, text=req.text, target_lang=req.target_lang)
+        return {"translated": translated, "original": req.text, "success": success}
     except Exception as e:
         logger.error(f"Error translating text: {e}")
         return {"translated": req.text, "original": req.text, "success": False, "error": str(e)}

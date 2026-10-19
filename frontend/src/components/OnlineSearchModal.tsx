@@ -20,7 +20,7 @@ import {
   Languages
 } from 'lucide-react';
 import { ComicInfo, OnlineSearchResult, SessionManifest, VolumeCoverItem } from '../types';
-import { searchOnlineManga, fetchMangaDexVolumeCovers, applyOnlineCover, translateOnlineText } from '../api';
+import { searchOnlineManga, fetchVolumeCovers, applyOnlineCover, translateOnlineText } from '../api';
 import { useTranslation } from '../i18n';
 
 interface OnlineSearchModalProps {
@@ -61,7 +61,7 @@ export const OnlineSearchModal: React.FC<OnlineSearchModalProps> = ({
   }, [session, defaultQuery]);
 
   const [query, setQuery] = useState('');
-  const [sourceFilter, setSourceFilter] = useState<'auto' | 'mangaupdates' | 'mangadex' | 'anilist' | 'kitsu' | 'bangumi' | 'openlibrary'>('auto');
+  const [sourceFilter, setSourceFilter] = useState<'auto' | 'listadomanga' | 'mangaupdates' | 'mangadex' | 'anilist' | 'kitsu' | 'bangumi' | 'openlibrary'>('auto');
   const [targetLang, setTargetLang] = useState<'es' | 'en' | 'ja'>('es');
   const [isLoading, setIsLoading] = useState(false);
   const [results, setResults] = useState<OnlineSearchResult[]>([]);
@@ -127,7 +127,7 @@ export const OnlineSearchModal: React.FC<OnlineSearchModalProps> = ({
     performSearch(query, sourceFilter, targetLang);
   };
 
-  const handleSourceTabChange = (newSource: 'auto' | 'mangaupdates' | 'mangadex' | 'anilist' | 'kitsu' | 'bangumi' | 'openlibrary') => {
+  const handleSourceTabChange = (newSource: 'auto' | 'listadomanga' | 'mangaupdates' | 'mangadex' | 'anilist' | 'kitsu' | 'bangumi' | 'openlibrary') => {
     setSourceFilter(newSource);
     if (query.trim()) {
       performSearch(query, newSource, targetLang);
@@ -141,7 +141,7 @@ export const OnlineSearchModal: React.FC<OnlineSearchModalProps> = ({
     }
   };
 
-  // Interactive on-demand translation of synopsis to Spanish
+  // Interactive on-demand translation of synopsis to Spanish with multi-layer fallback
   const handleTranslateSynopsis = async (item: OnlineSearchResult) => {
     const itemKey = `${item.provider}-${item.id}`;
     const textToTranslate = item.synopsis_original || item.synopsis_es;
@@ -149,15 +149,47 @@ export const OnlineSearchModal: React.FC<OnlineSearchModalProps> = ({
 
     setTranslatingIds((prev) => ({ ...prev, [itemKey]: true }));
     try {
-      const res = await translateOnlineText(textToTranslate, targetLang);
-      if (res.translated) {
+      let translatedText = '';
+      let success = false;
+
+      // 1. Try backend translation
+      try {
+        const res = await translateOnlineText(textToTranslate, targetLang);
+        if (res.success && res.translated) {
+          translatedText = res.translated;
+          success = true;
+        }
+      } catch (beErr) {
+        console.warn('Backend translation error, falling back to browser translation:', beErr);
+      }
+
+      // 2. Client-side browser fallback (uses user's residential IP if Docker container was rate-limited)
+      if (!success) {
+        try {
+          const clientUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${targetLang}&dt=t&q=${encodeURIComponent(textToTranslate.slice(0, 1500))}`;
+          const clientRes = await fetch(clientUrl);
+          if (clientRes.ok) {
+            const data = await clientRes.json();
+            if (Array.isArray(data) && Array.isArray(data[0])) {
+              translatedText = data[0].map((seg: any) => seg[0]).join('');
+              if (translatedText && translatedText.trim() !== textToTranslate.trim()) {
+                success = true;
+              }
+            }
+          }
+        } catch (clientErr) {
+          console.warn('Client-side translation fallback error:', clientErr);
+        }
+      }
+
+      if (success && translatedText) {
         setResults((prev) =>
           prev.map((r) => {
             if (`${r.provider}-${r.id}` === itemKey) {
               return {
                 ...r,
                 synopsis_original: r.synopsis_original || r.synopsis_es,
-                synopsis_es: res.translated,
+                synopsis_es: translatedText,
                 synopsis_was_translated: true,
                 synopsis_has_es: true,
                 language_status: 'complete',
@@ -167,6 +199,8 @@ export const OnlineSearchModal: React.FC<OnlineSearchModalProps> = ({
             return r;
           })
         );
+      } else {
+        setError('No se pudo traducir la sinopsis en este momento. Inténtalo de nuevo.');
       }
     } catch (err: any) {
       setError('No se pudo traducir la sinopsis en este momento. Inténtalo de nuevo.');
@@ -330,7 +364,7 @@ export const OnlineSearchModal: React.FC<OnlineSearchModalProps> = ({
     setIsLoadingVolumeCovers(true);
     setVolumeCoversList([]);
     try {
-      const covers = await fetchMangaDexVolumeCovers(item.id);
+      const covers = await fetchVolumeCovers(item.provider, item.id);
       setVolumeCoversList(covers);
     } catch (err: any) {
       setError('No se pudieron cargar las portadas de los tomos de esta obra.');
@@ -489,6 +523,7 @@ export const OnlineSearchModal: React.FC<OnlineSearchModalProps> = ({
               <span className="text-[11px] font-semibold text-slate-400 mr-1">Fuente:</span>
               {[
                 { id: 'auto', label: '⭐ Automático' },
+                { id: 'listadomanga', label: '🇪🇸 ListadoManga' },
                 { id: 'mangaupdates', label: 'MangaUpdates' },
                 { id: 'mangadex', label: 'MangaDex' },
                 { id: 'anilist', label: 'AniList' },
@@ -569,6 +604,11 @@ export const OnlineSearchModal: React.FC<OnlineSearchModalProps> = ({
                         <span className="absolute top-2 left-2 px-2 py-0.5 rounded bg-black/80 backdrop-blur-xs text-white font-bold text-[10px] shadow">
                           {cov.volume}
                         </span>
+                        {cov.locale_label && (
+                          <span className="absolute top-2 right-2 px-1.5 py-0.5 rounded bg-black/80 backdrop-blur-xs text-amber-300 font-semibold text-[9px] shadow">
+                            {cov.locale_label}
+                          </span>
+                        )}
                       </div>
                       <div className="p-2.5 flex flex-col gap-1.5">
                         <button
