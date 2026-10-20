@@ -49,7 +49,7 @@ import { useTranslation } from '../i18n';
 interface UploadModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onUploadSuccess: (session: SessionManifest) => void;
+  onUploadSuccess: (session: SessionManifest, shouldActivate?: boolean) => void;
   defaultSeries?: string;
   activeSession?: SessionManifest | null;
   allSessions?: ComicSessionSummary[];
@@ -89,6 +89,18 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   const [isMinimized, setIsMinimized] = useState(false);
   const [currentIndex, setCurrentIndex] = useState<number>(-1);
   const [overallError, setOverallError] = useState<string | null>(null);
+
+  // List of unique series existing in current staging library
+  const existingSeriesList = useMemo(() => {
+    const set = new Set<string>();
+    allSessions.forEach((s) => {
+      const cleaned = cleanSeriesDisplayName(s.series || s.title || s.original_filename);
+      if (cleaned && cleaned !== 'Sin Serie') {
+        set.add(cleaned);
+      }
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [allSessions]);
 
   // Server Ingestion State
   const [activeSourceTab, setActiveSourceTab] = useState<'pc' | 'server'>('pc');
@@ -159,7 +171,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
           const firstSession = await waitForSessionReady(result.imported[0].session_id, (p) => {
             setServerImportMessage(`Extrayendo ${result.imported[0].filename} (${p.percent}%): ${p.message}`);
           });
-          onUploadSuccess(firstSession);
+          onUploadSuccess(firstSession, !activeSession);
           onClose();
           return;
         } catch (err: any) {
@@ -212,27 +224,61 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   if (!isOpen && !isProcessing) return null;
   if (isMinimized) return null;
 
+  const extractSeriesCandidate = (fname: string): string => {
+    let clean = fname.replace(/\.[^/.]+$/, '');
+    clean = clean.replace(/\[[^\]]*\]/g, ' ').replace(/\([^)]*\)/g, ' ').trim();
+    const numMatch = clean.match(/\b(?:c|ch|cap|capitulo|chapter|v|vol|volume|tomo|#)\.?\s*(\d+(?:\.\d+)?)/i) || clean.match(/\b(\d{1,4}(?:\.\d+)?)\b/);
+    if (numMatch) {
+      const idx = clean.indexOf(numMatch[0]);
+      if (idx > 0) {
+        clean = clean.substring(0, idx).trim();
+      } else if (idx === 0) {
+        // Starts with the chapter/volume marker (e.g. "Cap 168", "c12", "01") -> no series in filename!
+        clean = '';
+      }
+    }
+    clean = clean.replace(/^\s*(?:c|ch|cap|#)?\s*\d{1,4}(?:\.\d+)?\s*[-_.:\s]\s*/i, '').trim();
+    clean = clean.replace(/\s*(?:#|v|vol|volume|tomo|c|ch|cap|capitulo|chapter)\.?\s*\d+(?:[-–_]\d+)?.*$/i, '').trim();
+    clean = clean.replace(/\s+(?:tomo|tomos|vol|volume|volumes|cap|capitulo|capitulos|chapter|chapters|ch)\.?\s*$/i, '').trim();
+    clean = clean.replace(/\s+\d{1,4}(?:[-–_]\d+)?\s*$/i, '').trim();
+    clean = clean.replace(/^[-_.:\s]+|[-_.:\s]+$/g, '').trim();
+
+    if (!clean || /^(?:c|ch|cap|capitulo|chapter|v|vol|volume|tomo|#)?\s*\d+(?:\.\d+)?$/i.test(clean)) {
+      return '';
+    }
+    const res = cleanSeriesDisplayName(clean);
+    return res !== 'Sin Serie' ? res : '';
+  };
+
   const guessFromFilename = (fname: string, seriesOverride?: string | null) => {
-    const isCap = /\b(c|ch|cap|capitulo|chapter)\.?\s*(\d+)/i.test(fname);
     const isVol = /\b(v|vol|volume|tomo)\.?\s*(\d+)/i.test(fname);
     const type: 'tomo' | 'capitulo' = isVol ? 'tomo' : 'capitulo';
 
     let num = '';
-    const numMatch = fname.match(/\b(?:c|ch|cap|capitulo|chapter|v|vol|volume|tomo|#)\.?\s*(\d+(?:\.\d+)?)/i) || fname.match(/\b(\d{1,4})\b/);
+    const numMatch = fname.match(/\b(?:c|ch|cap|capitulo|chapter|v|vol|volume|tomo|#)\.?\s*(\d+(?:\.\d+)?)/i) || fname.match(/\b(\d{1,4}(?:\.\d+)?)\b/);
     if (numMatch) num = numMatch[1];
 
-    let cleanSeries = fname.replace(/\.[^/.]+$/, '');
-    cleanSeries = cleanSeries.replace(/\[[^\]]*\]/g, '').replace(/\([^)]*\)/g, '').trim();
-    if (numMatch) {
-      const idx = cleanSeries.indexOf(numMatch[0]);
-      if (idx > 0) cleanSeries = cleanSeries.substring(0, idx).trim();
-    }
-    cleanSeries = cleanSeries.replace(/[-_]+$/, '').trim();
-
+    const cand = extractSeriesCandidate(fname);
     const activeSeries = seriesOverride !== undefined ? seriesOverride : assignedSeries;
-    const finalSeries = activeSeries || cleanSeries || 'Cómic';
+    const activeFallback = activeSession?.metadata?.Series ? cleanSeriesDisplayName(activeSession.metadata.Series) : '';
+    const fallbackSeries = activeFallback !== 'Sin Serie' ? activeFallback : '';
+    const finalSeries = activeSeries || cand || fallbackSeries || 'Cómic';
 
     return { type, series: finalSeries, number: num };
+  };
+
+  const handleApplySeriesToAll = (newSeriesName: string) => {
+    const trimmed = newSeriesName.trim();
+    setAssignedSeries(trimmed || null);
+    if (trimmed) setTomoSeriesName(trimmed);
+    setQueue((prev) =>
+      prev.map((item) => {
+        if (item.status === 'pending') {
+          return { ...item, series: trimmed || extractSeriesCandidate(item.file.name) || 'Cómic' };
+        }
+        return item;
+      })
+    );
   };
 
   const handleSwitchToNewGroup = () => {
@@ -241,8 +287,8 @@ export const UploadModal: React.FC<UploadModalProps> = ({
     setQueue((prev) =>
       prev.map((item) => {
         if (item.status === 'pending') {
-          const guess = guessFromFilename(item.file.name, null);
-          return { ...item, series: guess.series };
+          const cand = extractSeriesCandidate(item.file.name);
+          return { ...item, series: cand || 'Cómic' };
         }
         return item;
       })
@@ -274,16 +320,52 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       }
     }
 
+    // 1. Detect if any file in the incoming batch has a valid series name
+    let detectedBatchSeries = '';
+    for (const file of comicFiles) {
+      const cand = extractSeriesCandidate(file.name);
+      if (cand) {
+        detectedBatchSeries = cand;
+        break;
+      }
+    }
+
+    // Series fallback hierarchy:
+    // 1. assignedSeries (explicitly assigned or selected)
+    // 2. detectedBatchSeries (from one of the files in this batch)
+    // 3. activeSession series (if user has a comic open)
+    // 4. defaultSeries
+    const activeFallback = activeSession?.metadata?.Series ? cleanSeriesDisplayName(activeSession.metadata.Series) : '';
+    const fallbackSeries = assignedSeries || detectedBatchSeries || (activeFallback !== 'Sin Serie' ? activeFallback : '') || defaultSeries || '';
+
+    // If assignedSeries wasn't set yet and a valid series is found, assign it globally
+    if (!assignedSeries && fallbackSeries && fallbackSeries !== 'Sin Serie') {
+      setAssignedSeries(fallbackSeries);
+      if (!tomoSeriesName) {
+        setTomoSeriesName(fallbackSeries);
+      }
+    }
+
     const newItems: BatchQueueItem[] = [];
 
     comicFiles.forEach((file) => {
-      const guess = guessFromFilename(file.name, assignedSeries);
+      const cand = extractSeriesCandidate(file.name);
+      const isVol = /\b(v|vol|volume|tomo)\.?\s*(\d+)/i.test(file.name);
+      const type: 'tomo' | 'capitulo' = isVol ? 'tomo' : 'capitulo';
+
+      let num = '';
+      const numMatch = file.name.match(/\b(?:c|ch|cap|capitulo|chapter|v|vol|volume|tomo|#)\.?\s*(\d+(?:\.\d+)?)/i) || file.name.match(/\b(\d{1,4}(?:\.\d+)?)\b/);
+      if (numMatch) num = numMatch[1];
+
+      // Item series: prefer assignedSeries -> cand -> fallbackSeries -> 'Cómic'
+      const itemSeries = assignedSeries || cand || fallbackSeries || 'Cómic';
+
       newItems.push({
         id: `${file.name}-${file.size}-${Date.now()}-${Math.random()}`,
         file,
-        item_type: guess.type,
-        series: guess.series,
-        number: guess.number,
+        item_type: type,
+        series: itemSeries,
+        number: num,
         status: 'pending',
         uploadPercent: 0,
         processingPercent: 0,
@@ -430,9 +512,10 @@ export const UploadModal: React.FC<UploadModalProps> = ({
 
         completedSessions.push(session);
 
-        // If in individual mode, notify parent immediately so it shows up in real-time
+        // If in individual mode, notify parent immediately so it shows up in real-time in sidebar
         if (uploadMode === 'individual') {
-          onUploadSuccess(session);
+          const shouldActivate = !activeSession && queue.length === 1;
+          onUploadSuccess(session, shouldActivate);
         }
 
       } catch (err: any) {
@@ -469,7 +552,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
             target_volume: tomoVolumeNum === '' ? undefined : Number(tomoVolumeNum),
             delete_sources: true
           });
-          onUploadSuccess(merged);
+          onUploadSuccess(merged, !activeSession);
           onClose();
         } catch (err: any) {
           console.error('Error merging uploaded chapters:', err);
@@ -482,14 +565,14 @@ export const UploadModal: React.FC<UploadModalProps> = ({
             completedSessions.map((s) => s.session_id),
             true
           );
-          onUploadSuccess(appended);
+          onUploadSuccess(appended, !activeSession);
           onClose();
         } catch (err: any) {
           console.error('Error appending uploaded chapters:', err);
           setOverallError(`Error al incorporar capítulos al tomo: ${err.message}`);
         }
       } else if (uploadMode === 'merge_new_tomo' && completedSessions.length === 1) {
-        onUploadSuccess(completedSessions[0]);
+        onUploadSuccess(completedSessions[0], !activeSession);
       }
 
       onProgressUpdate?.({
@@ -1137,6 +1220,72 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                         );
                       })}
                     </select>
+                  </div>
+                )}
+              </div>
+
+              {/* Global Batch Series Selector & Quick Assigner */}
+              <div className="p-3.5 bg-slate-100/90 dark:bg-comic-950/90 border border-slate-200 dark:border-comic-800 rounded-xl space-y-2.5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-slate-900 dark:text-white">
+                    <FolderPlus className="w-4 h-4 text-indigo-500 dark:text-indigo-400" />
+                    <span>Serie asignada para toda la cola:</span>
+                  </div>
+                  {assignedSeries && !isProcessing && (
+                    <button
+                      type="button"
+                      onClick={() => handleApplySeriesToAll('')}
+                      className="text-[11px] text-slate-500 hover:text-rose-400 dark:text-slate-400 dark:hover:text-rose-300 transition underline underline-offset-2"
+                    >
+                      Restablecer detección por archivo
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    disabled={isProcessing}
+                    list="batch-existing-series-list"
+                    value={assignedSeries || ''}
+                    onChange={(e) => handleApplySeriesToAll(e.target.value)}
+                    placeholder="Escribe o selecciona la serie para todos los archivos (ej: Ao No Exorcist)..."
+                    className="flex-1 px-3 py-1.5 rounded-lg bg-white dark:bg-comic-900 border border-slate-300 dark:border-comic-700 text-xs text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-indigo-500 font-semibold shadow-xs"
+                  />
+                  <datalist id="batch-existing-series-list">
+                    {existingSeriesList.map((s) => (
+                      <option key={s} value={s} />
+                    ))}
+                  </datalist>
+                  {assignedSeries && !isProcessing && (
+                    <button
+                      type="button"
+                      onClick={() => handleApplySeriesToAll(assignedSeries)}
+                      className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition shrink-0 active:scale-95 shadow-xs"
+                    >
+                      Aplicar a todos
+                    </button>
+                  )}
+                </div>
+
+                {/* Quick Series Badges from Library */}
+                {existingSeriesList.length > 0 && !isProcessing && (
+                  <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                    <span className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">Series en biblioteca:</span>
+                    {existingSeriesList.slice(0, 8).map((s) => (
+                      <button
+                        key={s}
+                        type="button"
+                        onClick={() => handleApplySeriesToAll(s)}
+                        className={`px-2 py-0.5 rounded-md text-[10px] font-semibold border transition active:scale-95 ${
+                          assignedSeries?.toLowerCase() === s.toLowerCase()
+                            ? 'bg-indigo-600 text-white border-indigo-500 shadow-xs'
+                            : 'bg-white dark:bg-comic-900 hover:bg-indigo-50 dark:hover:bg-comic-800 text-indigo-700 dark:text-indigo-300 border-slate-200 dark:border-comic-700'
+                        }`}
+                      >
+                        {s}
+                      </button>
+                    ))}
                   </div>
                 )}
               </div>

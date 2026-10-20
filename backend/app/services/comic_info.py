@@ -167,13 +167,20 @@ def guess_metadata_from_filename(filename: str) -> ComicInfoModel:
         model.Manga = "YesAndRightToLeft"
         model.Genre = "Manga"
 
-    # 3. Detect volume: v01, vol. 1, Volume 1, (v01)
-    vol_match = re.search(r"[\(\[\s]v(?:ol\.?)?\s*(\d+)[\)\]\s]?", name, re.IGNORECASE)
+    # 3. Detect volume: v01, vol. 1, Volume 1, (v01), Tomo 1, Tomo 01
+    vol_match = re.search(r"(?:^|[\(\[\s\-_])(?:v|vol|volume|tomo)\.?\s*(\d+)(?:[\)\]\s\-_]|$)", name, re.IGNORECASE)
     if vol_match:
         try:
             model.Volume = int(vol_match.group(1))
-            # Remove matched part to clean up
-            name = name[:vol_match.start()] + " " + name[vol_match.end():]
+            part_before = name[:vol_match.start()].strip(" -_")
+            part_after = name[vol_match.end():].strip(" -_")
+            if part_before:
+                model.Series = part_before
+            if part_after:
+                part_after = re.sub(r"[\(\[][^\)\]]+[\)\]]", "", part_after).strip(" -_")
+                if part_after:
+                    model.Title = part_after
+            name = (part_before + " " + part_after).strip()
         except ValueError:
             pass
 
@@ -184,14 +191,14 @@ def guess_metadata_from_filename(filename: str) -> ComicInfoModel:
         model.Number = ch_match.group(1)
         part_before = name[:ch_match.start()].strip(" -_")
         part_after = name[ch_match.end():].strip(" -_")
-        if part_before:
+        if part_before and not model.Series:
             model.Series = part_before
-        if part_after:
+        if part_after and not model.Title:
             # Clean common trailing tags like (Digital), [Web], etc.
             part_after = re.sub(r"[\(\[][^\)\]]+[\)\]]", "", part_after).strip(" -_")
             if part_after:
                 model.Title = part_after
-    else:
+    elif not model.Volume:
         # Pattern B: Series - 001 - Title
         parts = [p.strip() for p in re.split(r"\s+-\s+", name) if p.strip()]
         if len(parts) >= 3 and re.match(r"^\d+(?:\.\d+)?$", parts[1]):
@@ -212,9 +219,13 @@ def guess_metadata_from_filename(filename: str) -> ComicInfoModel:
             else:
                 model.Series = parts[0]
 
-    # Clean residual brackets from Series and Title
+    # Clean residual brackets and trailing tomo/vol/cap keywords from Series and Title
     if model.Series:
         model.Series = re.sub(r"[\(\[][^\)\]]+[\)\]]", "", model.Series).strip(" -_")
+        model.Series = re.sub(r"\s+(?:tomo|tomos|vol|volume|volumes|cap|capitulo|capitulos|chapter|chapters|ch)\.?\s*$", "", model.Series, flags=re.IGNORECASE).strip()
+        # If inferred Series is just a chapter or volume marker (e.g. "Cap 168", "c01", "12"), reset it to empty
+        if re.match(r'^(?:c|ch|cap|capitulo|chapter|v|vol|volume|tomo|#)?\s*\d+(?:\.\d+)?$', model.Series, flags=re.IGNORECASE):
+            model.Series = ""
     if model.Title:
         model.Title = re.sub(r"[\(\[][^\)\]]+[\)\]]", "", model.Title).strip(" -_")
 

@@ -111,8 +111,11 @@ def clean_series_display_name(raw: Optional[str]) -> str:
     s = re.sub(r'\([^\)]*\)', ' ', s).strip()
     s = re.sub(r'^\s*(?:c|ch|cap|#)?\s*\d{1,4}(?:\.\d+)?\s*[-_.:\s]\s*', '', s, flags=re.IGNORECASE).strip()
     s = re.sub(r'\s*(?:#|v|vol|volume|tomo|c|ch|cap|capitulo|chapter)\.?\s*\d+(?:[-–_]\d+)?.*$', '', s, flags=re.IGNORECASE).strip()
+    s = re.sub(r'\s+(?:tomo|tomos|vol|volume|volumes|cap|capitulo|capitulos|chapter|chapters|ch)\.?\s*$', '', s, flags=re.IGNORECASE).strip()
     s = re.sub(r'\s+\d{1,4}(?:[-–_]\d+)?\s*$', '', s).strip()
     s = re.sub(r'[-_.:]+$', '', s).strip()
+    if not s or re.match(r'^(?:c|ch|cap|capitulo|chapter|v|vol|volume|tomo|#)?\s*\d+(?:\.\d+)?$', s, flags=re.IGNORECASE):
+        return "Sin Serie"
     return s or "Sin Serie"
 
 class SessionManager:
@@ -241,7 +244,11 @@ class SessionManager:
                             clean_series = manifest.metadata.Series
                             if not clean_series:
                                 inferred_meta = infer_metadata_from_filename(manifest.original_filename)
-                                clean_series = inferred_meta.Series or manifest.original_filename
+                                if inferred_meta.Series:
+                                    clean_series = inferred_meta.Series
+                                else:
+                                    cleaned_fname = clean_series_display_name(manifest.original_filename)
+                                    clean_series = cleaned_fname if cleaned_fname != "Sin Serie" else ""
 
                             results.append({
                                 "session_id": manifest.session_id,

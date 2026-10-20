@@ -2019,11 +2019,13 @@ export const App: React.FC = () => {
           setIsUploadOpen(false);
           setUploadDefaultSeries(null);
         }}
-        onUploadSuccess={(newSession) => {
-          setSession(newSession);
-          setStoredActiveSessionId(newSession.session_id);
-          setHistoryStack([]);
+        onUploadSuccess={(newSession, shouldActivate = false) => {
           loadSessions();
+          if (shouldActivate || !session) {
+            setSession(newSession);
+            setStoredActiveSessionId(newSession.session_id);
+            setHistoryStack([]);
+          }
         }}
       />
 

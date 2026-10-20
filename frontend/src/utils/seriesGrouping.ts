@@ -26,11 +26,17 @@ export function cleanSeriesDisplayName(raw?: string): string {
   s = s.replace(/^\s*(?:c|ch|cap|#)?\s*\d{1,4}(?:\.\d+)?\s*[-_.:\s]\s*/i, '').trim();
   // Strip chapter/volume suffixes with tags like #01, #086-130, Tomo 1, Vol. 2, v4, Cap. 131, c12, etc.
   s = s.replace(/\s*(?:#|v|vol|volume|tomo|c|ch|cap|capitulo|chapter)\.?\s*\d+(?:[-–_]\d+)?.*$/i, '').trim();
+  // Strip trailing words like tomo, tomos, vol, volume, volumes, cap, capitulo, capitulos, chapter, chapters
+  s = s.replace(/\s+(?:tomo|tomos|vol|volume|volumes|cap|capitulo|capitulos|chapter|chapters|ch)\.?\s*$/i, '').trim();
   // Strip bare number / range suffixes at the end of the series name (e.g. "La Vida Después de la Muerte 131", "Series 01")
   s = s.replace(/\s+\d{1,4}(?:[-–_]\d+)?\s*$/i, '').trim();
   // Strip trailing punctuation
   s = s.replace(/[-_.:]+$/, '').trim();
-  return s || raw.replace(/\.(?:cbz|cbr|cb7|cbt|pdf|epub|zip|rar|7z|tar)$/i, '').trim() || 'Sin Serie';
+  // If the remaining string is empty or is purely a chapter/volume number (e.g. "Cap 168", "168", "Tomo 1"), it has no series name
+  if (!s || /^(?:c|ch|cap|capitulo|chapter|v|vol|volume|tomo|#)?\s*\d+(?:\.\d+)?$/i.test(s)) {
+    return 'Sin Serie';
+  }
+  return s || 'Sin Serie';
 }
 
 export function cleanSeriesKey(raw?: string): string {
