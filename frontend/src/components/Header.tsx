@@ -20,7 +20,8 @@ import {
   Sun,
   Moon,
   Layers,
-  Library
+  Library,
+  Undo2
 } from 'lucide-react';
 import { SessionManifest } from '../types';
 import { APP_VERSION, APP_NAME } from '../version';
@@ -48,6 +49,8 @@ interface HeaderProps {
   onOpenDonation?: () => void;
   onOpenImageAnalysis?: () => void;
   onOpenOnlineSearch?: () => void;
+  canUndo?: boolean;
+  onUndo?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -70,7 +73,9 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleMonitor,
   onOpenDonation,
   onOpenImageAnalysis,
-  onOpenOnlineSearch
+  onOpenOnlineSearch,
+  canUndo = false,
+  onUndo
 }) => {
   const { t, language, setLanguage } = useTranslation();
   const { theme, toggleTheme } = useTheme();
@@ -248,6 +253,23 @@ export const Header: React.FC<HeaderProps> = ({
                 >
                   <FileText className="w-4 h-4 text-indigo-500 dark:text-indigo-400 shrink-0" />
                   <span className="hidden md:inline">{t('header.comicInfo')}</span>
+                </button>
+
+                {/* Undo Button (Always Visible in Header) */}
+                <button
+                  type="button"
+                  onClick={onUndo}
+                  disabled={!canUndo || !onUndo}
+                  className={`h-8 px-2.5 sm:px-3 rounded-lg border text-xs font-semibold transition active:scale-95 flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
+                    canUndo && onUndo
+                      ? 'bg-slate-100 hover:bg-slate-200 text-slate-800 border-slate-300 dark:bg-comic-800 dark:hover:bg-comic-700 dark:text-slate-200 dark:border-comic-700 cursor-pointer shadow-xs'
+                      : 'opacity-40 cursor-not-allowed bg-slate-100/50 text-slate-400 border-slate-200 dark:bg-comic-900/50 dark:text-slate-600 dark:border-comic-800/50'
+                  }`}
+                  title={canUndo ? t('common.undo') : 'Deshacer (Ctrl+Z) - Sin cambios para deshacer'}
+                  aria-label={t('common.undo')}
+                >
+                  <Undo2 className={`w-4 h-4 shrink-0 ${canUndo ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-400 dark:text-slate-600'}`} />
+                  <span className="hidden md:inline">{t('common.undoShort') || 'Deshacer'}</span>
                 </button>
 
                 {onOpenOnlineSearch && (

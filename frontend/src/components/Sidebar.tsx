@@ -65,6 +65,7 @@ import {
   cleanSeriesDisplayName
 } from '../utils/seriesGrouping';
 import { MoveToSeriesModal } from './MoveToSeriesModal';
+import { RenameGroupModal } from './RenameGroupModal';
 import { useTranslation } from '../i18n';
 
 interface SidebarProps {
@@ -93,6 +94,7 @@ interface SidebarProps {
   onConfirmVerification?: (sessionId: string) => Promise<void>;
   onConfirmAllPendingVerification?: () => Promise<void>;
   onRevertOverwrite?: (sessionId: string) => Promise<void>;
+  onRenameGroup?: (oldName: string, newName: string, sessionIds: string[], updateMatchingTitles: boolean) => Promise<void>;
 }
 
 interface SortableSessionItemProps {
@@ -516,6 +518,7 @@ interface DroppableSeriesGroupProps {
   onOpenAppendChapters?: (targetTomo?: ComicSessionSummary, initialChapterIds?: string[]) => void;
   onOpenExportGroup?: (group: SeriesGroup) => void;
   onOpenDeleteGroup?: (group: SeriesGroup) => void;
+  onOpenRenameGroup?: (group: SeriesGroup) => void;
   onlineSummary?: SeriesOnlineSummary;
   onOpenOnlineSearch?: (seriesName?: string) => void;
   onConfirmVerification?: (sessionId: string) => Promise<void> | void;
@@ -553,6 +556,7 @@ const DroppableSeriesGroup: React.FC<DroppableSeriesGroupProps> = ({
   onOpenAppendChapters,
   onOpenExportGroup,
   onOpenDeleteGroup,
+  onOpenRenameGroup,
   onOpenOnlineSearch,
   onConfirmVerification,
   onRevertOverwrite
@@ -660,12 +664,23 @@ const DroppableSeriesGroup: React.FC<DroppableSeriesGroupProps> = ({
             <span className="text-[9px] font-mono font-bold uppercase tracking-wider text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/80 border border-indigo-200 dark:border-indigo-700/60 px-1.5 py-0.2 rounded shrink-0">
               {t('sidebar.groupTag')}
             </span>
-            <h3
-              className="text-xs sm:text-sm font-bold text-slate-800 dark:text-slate-100 tracking-tight truncate max-w-[220px] sm:max-w-[340px] group-hover/hdr:text-indigo-600 dark:group-hover/hdr:text-indigo-300 transition"
-              title={onlineSummary?.official_title && onlineSummary.official_title !== group.name ? `${group.name} (${onlineSummary.official_title})` : group.name}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenRenameGroup?.(group);
+              }}
+              className="flex items-center gap-1 group/title text-left cursor-pointer"
+              title={t('sidebar.renameGroupTitle', { name: group.name }) || `Renombrar serie "${group.name}"`}
             >
-              {group.name}
-            </h3>
+              <h3
+                className="text-xs sm:text-sm font-bold text-slate-800 dark:text-slate-100 tracking-tight truncate max-w-[200px] sm:max-w-[320px] group-hover/title:text-indigo-600 dark:group-hover/title:text-indigo-300 transition"
+                title={onlineSummary?.official_title && onlineSummary.official_title !== group.name ? `${group.name} (${onlineSummary.official_title})` : group.name}
+              >
+                {group.name}
+              </h3>
+              <Edit3 className="w-3 h-3 text-slate-400 group-hover/title:text-indigo-500 opacity-60 group-hover/title:opacity-100 transition shrink-0" />
+            </button>
 
             {/* Official Online Status Badge (En emisión, Finalizado, etc.) */}
             {onlineSummary && onlineSummary.status !== 'UNKNOWN' && (
@@ -755,6 +770,20 @@ const DroppableSeriesGroup: React.FC<DroppableSeriesGroupProps> = ({
             aria-label={`Buscar portadas oficiales e información online de "${group.name}"`}
           >
             <Globe className="w-3.5 h-3.5 text-indigo-400" />
+          </button>
+
+          {/* Rename this entire series group */}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenRenameGroup?.(group);
+            }}
+            className="p-1 rounded-md text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-500/20 transition-colors cursor-pointer"
+            title={t('sidebar.renameGroupTitle', { name: group.name }) || `Renombrar serie "${group.name}"`}
+            aria-label={`Renombrar serie "${group.name}"`}
+          >
+            <Edit3 className="w-3.5 h-3.5 text-indigo-400" />
           </button>
 
           {/* Export all tomos in this group */}
@@ -986,7 +1015,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenOnlineSearch,
   onConfirmVerification,
   onConfirmAllPendingVerification,
-  onRevertOverwrite
+  onRevertOverwrite,
+  onRenameGroup
 }) => {
   const { t } = useTranslation();
   // Resizable Sidebar width state (bounded between MIN_SIDEBAR_WIDTH and 50% screen width)
@@ -1074,6 +1104,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   // Move Modal State
   const [moveModalSessions, setMoveModalSessions] = useState<ComicSessionSummary[] | null>(null);
+  // Rename Group Modal State
+  const [renameGroupTarget, setRenameGroupTarget] = useState<SeriesGroup | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -1805,6 +1837,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   onOpenAppendChapters={onOpenAppendChapters}
                   onOpenExportGroup={onOpenExportGroup}
                   onOpenDeleteGroup={onOpenDeleteGroup}
+                  onOpenRenameGroup={(g) => setRenameGroupTarget(g)}
                   onlineSummary={onlineSummaries[group.name.trim().toLowerCase()]}
                   onOpenOnlineSearch={onOpenOnlineSearch}
                   onConfirmVerification={onConfirmVerification}
@@ -1986,6 +2019,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
             if (onMoveSessionsToSeries) {
               await onMoveSessionsToSeries(sessionIds, targetSeriesName);
               if (selectedIds.length > 0) setSelectedIds([]);
+            }
+          }}
+        />
+      )}
+
+      {/* Rename Group Modal */}
+      {renameGroupTarget && (
+        <RenameGroupModal
+          isOpen={Boolean(renameGroupTarget)}
+          oldName={renameGroupTarget.name}
+          sessionCount={renameGroupTarget.sessions.length}
+          sessionIds={renameGroupTarget.sessions.map((s) => s.session_id)}
+          onClose={() => setRenameGroupTarget(null)}
+          onConfirmRename={async (oldName, newName, sessionIds, updateMatchingTitles) => {
+            if (onRenameGroup) {
+              await onRenameGroup(oldName, newName, sessionIds, updateMatchingTitles);
             }
           }}
         />

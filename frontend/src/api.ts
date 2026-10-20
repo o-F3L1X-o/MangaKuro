@@ -644,6 +644,24 @@ export async function updateQuickMetadata(
   return res.json();
 }
 
+export async function renameSeriesGroup(params: {
+  old_name: string;
+  new_name: string;
+  session_ids?: string[];
+  update_matching_titles?: boolean;
+}): Promise<{ renamed_count: number; old_series: string; new_series: string }> {
+  const res = await fetch(`${API_BASE}/series/rename`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params)
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Error al renombrar el grupo de serie');
+  }
+  return res.json();
+}
+
 export async function mergeSessions(params: {
   source_session_ids: string[];
   target_series: string;

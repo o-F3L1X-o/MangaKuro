@@ -24,6 +24,7 @@ interface QuickRenameModalProps {
   initialVolume?: number | null;
   onClose: () => void;
   onSuccess: (updated: SessionManifest) => void;
+  onOpenRenameGroup?: (seriesName: string) => void;
 }
 
 export const QuickRenameModal: React.FC<QuickRenameModalProps> = ({
@@ -36,7 +37,8 @@ export const QuickRenameModal: React.FC<QuickRenameModalProps> = ({
   initialNumber = '',
   initialVolume = null,
   onClose,
-  onSuccess
+  onSuccess,
+  onOpenRenameGroup
 }) => {
   const { t } = useTranslation();
   const effectiveParentSeries = groupSeriesName || initialSeries || '';
@@ -145,9 +147,25 @@ export const QuickRenameModal: React.FC<QuickRenameModalProps> = ({
                 </span>
               </div>
             </div>
-            <span className="text-[10px] px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-600 dark:text-emerald-300 border border-emerald-500/20 font-medium shrink-0">
-              {t('quickRename.insideGroup')}
-            </span>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <span className="text-[10px] px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-600 dark:text-emerald-300 border border-emerald-500/20 font-medium shrink-0">
+                {t('quickRename.insideGroup')}
+              </span>
+              {onOpenRenameGroup && effectiveParentSeries && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    onOpenRenameGroup(effectiveParentSeries);
+                  }}
+                  className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950/80 border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900 text-[10px] font-bold transition cursor-pointer"
+                  title={`Renombrar la serie "${effectiveParentSeries}" para todos los tomos y capítulos del grupo`}
+                >
+                  <Edit3 className="w-2.5 h-2.5" />
+                  <span>Renombrar Serie</span>
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Primary Field: Title / Name of the chapter or tomo */}

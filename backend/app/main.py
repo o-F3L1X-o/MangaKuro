@@ -193,6 +193,12 @@ class QuickMetaRequest(BaseModel):
     number: Optional[str] = None
     volume: Optional[int] = None
 
+class RenameSeriesRequest(BaseModel):
+    old_name: str
+    new_name: str
+    session_ids: Optional[List[str]] = None
+    update_matching_titles: bool = True
+
 class MergeSessionsRequest(BaseModel):
     source_session_ids: List[str]
     target_series: str
@@ -650,6 +656,21 @@ async def update_quick_meta(session_id: str, req: QuickMetaRequest):
         )
         return updated
     except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/api/series/rename")
+async def rename_series_endpoint(req: RenameSeriesRequest):
+    """Renames a series group across multiple or all sessions in staging."""
+    try:
+        res = session_manager.rename_series(
+            old_name=req.old_name,
+            new_name=req.new_name,
+            session_ids=req.session_ids,
+            update_matching_titles=req.update_matching_titles
+        )
+        return res
+    except Exception as e:
+        logger.error(f"Error renaming series '{req.old_name}' -> '{req.new_name}': {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/api/session/merge")

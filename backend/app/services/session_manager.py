@@ -102,6 +102,19 @@ def resolve_clean_staging_path(raw_path: Any) -> Optional[Path]:
         s = "\\\\" + s[2:].replace("/", "\\")
     return Path(s)
 
+def clean_series_display_name(raw: Optional[str]) -> str:
+    if not raw:
+        return "Sin Serie"
+    s = raw.strip()
+    s = re.sub(r'\.(?:cbz|cbr|cb7|cbt|pdf|epub|zip|rar|7z|tar)$', '', s, flags=re.IGNORECASE).strip()
+    s = re.sub(r'\[[^\]]*\]', ' ', s).strip()
+    s = re.sub(r'\([^\)]*\)', ' ', s).strip()
+    s = re.sub(r'^\s*(?:c|ch|cap|#)?\s*\d{1,4}(?:\.\d+)?\s*[-_.:\s]\s*', '', s, flags=re.IGNORECASE).strip()
+    s = re.sub(r'\s*(?:#|v|vol|volume|tomo|c|ch|cap|capitulo|chapter)\.?\s*\d+(?:[-–_]\d+)?.*$', '', s, flags=re.IGNORECASE).strip()
+    s = re.sub(r'\s+\d{1,4}(?:[-–_]\d+)?\s*$', '', s).strip()
+    s = re.sub(r'[-_.:]+$', '', s).strip()
+    return s or "Sin Serie"
+
 class SessionManager:
     def __init__(self, staging_dir: Optional[Path] = None):
         self._custom_staging_dir: Optional[Path] = resolve_clean_staging_path(staging_dir) if staging_dir else None
@@ -2083,6 +2096,74 @@ class SessionManager:
         manifest.updated_at = time.time()
         self.save_session(manifest)
         return manifest
+
+    def rename_series(
+        self,
+        old_name: str,
+        new_name: str,
+        session_ids: Optional[List[str]] = None,
+        update_matching_titles: bool = True
+    ) -> Dict[str, Any]:
+        """Renames a series group across multiple or all sessions in staging."""
+        clean_new = new_name.strip()
+        if not clean_new:
+            raise ValueError("El nuevo nombre de la serie no puede estar vacío.")
+
+        clean_old = old_name.strip()
+        target_ids: List[str] = []
+
+        if session_ids:
+            target_ids = [str(sid).strip() for sid in session_ids if str(sid).strip()]
+        else:
+            clean_old_norm = clean_series_display_name(clean_old).lower() if clean_old else ""
+            if self.staging_dir.exists():
+                for sdir in self.staging_dir.iterdir():
+                    if not sdir.is_dir():
+                        continue
+                    mpath = sdir / "manifest.json"
+                    if mpath.exists():
+                        try:
+                            with open(mpath, "r", encoding="utf-8") as f:
+                                data = json.load(f)
+                                meta = data.get("metadata", {})
+                                s_series = (meta.get("Series") or "").strip()
+                                s_norm = clean_series_display_name(s_series).lower() if s_series else ""
+                                if s_series.lower() == clean_old.lower() or (clean_old_norm and s_norm == clean_old_norm):
+                                    target_ids.append(sdir.name)
+                        except Exception:
+                            pass
+
+        renamed_count = 0
+        clean_old_lower = clean_old.lower()
+        clean_old_norm_lower = clean_series_display_name(clean_old).lower() if clean_old else ""
+
+        for sid in target_ids:
+            try:
+                manifest = self.load_session(sid)
+                if not manifest:
+                    continue
+
+                manifest.metadata.Series = clean_new
+
+                if update_matching_titles and manifest.metadata.Title:
+                    t_clean = manifest.metadata.Title.strip().lower()
+                    if t_clean == clean_old_lower or (clean_old_norm_lower and t_clean == clean_old_norm_lower):
+                        manifest.metadata.Title = clean_new
+
+                manifest.updated_at = time.time()
+                self.save_session(manifest)
+                renamed_count += 1
+            except Exception as e:
+                logger.warning(f"Error updating series for session {sid}: {e}")
+
+        with self._stats_lock:
+            self._stats_cache = None
+
+        return {
+            "renamed_count": renamed_count,
+            "old_series": old_name,
+            "new_series": clean_new
+        }
 
     def apply_online_cover(
         self,

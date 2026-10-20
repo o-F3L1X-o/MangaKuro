@@ -17,7 +17,8 @@ import {
   AlertCircle,
   Plus,
   Globe,
-  Trash2
+  Trash2,
+  Edit3
 } from 'lucide-react';
 import { SessionManifest, ComicInfo, AppSettings, PageItem, ComicSessionSummary } from './types';
 import { 
@@ -50,7 +51,8 @@ import {
   logoutAuth,
   confirmSessionVerification,
   confirmBatchVerification,
-  revertSessionOverwrite
+  revertSessionOverwrite,
+  renameSeriesGroup
 } from './api';
 
 import { Header } from './components/Header';
@@ -72,6 +74,7 @@ import { ExtractChapterModal } from './components/ExtractChapterModal';
 import { QuickRenameModal } from './components/QuickRenameModal';
 import { CloneMetadataModal } from './components/CloneMetadataModal';
 import { AppendChaptersModal } from './components/AppendChaptersModal';
+import { RenameGroupModal } from './components/RenameGroupModal';
 import { SystemMonitorWidget } from './components/SystemMonitorWidget';
 import { FloatingTaskWidget, ActiveExportTask, ActiveUploadTask, ActiveSliceTask } from './components/FloatingTaskWidget';
 import { DonationModal } from './components/DonationModal';
@@ -80,7 +83,7 @@ import { ImageAnalysisModal } from './components/ImageAnalysisModal';
 import { ExportGroupModal } from './components/ExportGroupModal';
 import { DeleteGroupModal } from './components/DeleteGroupModal';
 import { OnlineSearchModal } from './components/OnlineSearchModal';
-import { cleanSeriesDisplayName, extractSortNumber, isSessionTomo, isSessionChapter, SeriesGroup } from './utils/seriesGrouping';
+import { cleanSeriesDisplayName, extractSortNumber, isSessionTomo, isSessionChapter, SeriesGroup, groupSessionsBySeries } from './utils/seriesGrouping';
 import { useStorageSanitizer } from './hooks/useStorageSanitizer';
 import { useTranslation } from './i18n';
 
@@ -197,6 +200,7 @@ export const App: React.FC = () => {
   const [inspectorRangeStartId, setInspectorRangeStartId] = useState<string | null>(null);
   const [quickRenameTarget, setQuickRenameTarget] = useState<ComicSessionSummary | SessionManifest | null>(null);
   const [quickRenameParentSeries, setQuickRenameParentSeries] = useState<string | null>(null);
+  const [globalRenameTarget, setGlobalRenameTarget] = useState<{ name: string; sessions: ComicSessionSummary[] } | null>(null);
   const [markedSessionsForMetadata, setMarkedSessionsForMetadata] = useState<ComicSessionSummary[] | null>(null);
   const [cloneSourceSessionId, setCloneSourceSessionId] = useState<string | null>(null);
   const [cloneInitialMetadata, setCloneInitialMetadata] = useState<ComicInfo | null>(null);
@@ -941,6 +945,35 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleRenameGroup = async (oldName: string, newName: string, sessionIds: string[], updateMatchingTitles: boolean = true) => {
+    setIsSaving(true);
+    try {
+      setSessionsList((prev) =>
+        prev.map((s) => (sessionIds.includes(s.session_id) ? { ...s, series: newName } : s))
+      );
+      if (session && sessionIds.includes(session.session_id)) {
+        setSession({
+          ...session,
+          metadata: { ...session.metadata, Series: newName }
+        });
+      }
+
+      await renameSeriesGroup({
+        old_name: oldName,
+        new_name: newName,
+        session_ids: sessionIds,
+        update_matching_titles: updateMatchingTitles
+      });
+
+      await loadSessions();
+    } catch (err: any) {
+      alert(`Error al renombrar el grupo de serie: ${err.message || err}`);
+      await loadSessions();
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   const handleSaveMetadata = async (newMeta: ComicInfo) => {
     if (!session) return;
     setIsSaving(true);
@@ -1185,6 +1218,8 @@ export const App: React.FC = () => {
           setOnlineSearchDefaultQuery('');
           setIsOnlineSearchOpen(true);
         }}
+        canUndo={historyStack.length > 0}
+        onUndo={handleUndo}
       />
 
       {/* Main Content Area with Sidebar */}
@@ -1248,6 +1283,7 @@ export const App: React.FC = () => {
           onConfirmVerification={handleConfirmVerification}
           onConfirmAllPendingVerification={handleConfirmAllPendingVerification}
           onRevertOverwrite={handleRevertOverwrite}
+          onRenameGroup={handleRenameGroup}
         />
 
         <main
@@ -1450,7 +1486,7 @@ export const App: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Catalog Grid (Full page height, no max-h-[55vh] constraints!) */}
+                  {/* Catalog Grid grouped by Series */}
                   {activeList.length === 0 ? (
                     <div className="py-16 text-center rounded-2xl bg-white dark:bg-comic-900/60 border border-slate-200 dark:border-comic-800">
                       <Library className="w-10 h-10 text-slate-400 dark:text-slate-600 mx-auto mb-2 opacity-50" />
@@ -1466,115 +1502,175 @@ export const App: React.FC = () => {
                       )}
                     </div>
                   ) : (
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-                      {activeList.map((item) => {
-                        const isTomo = isSessionTomo(item);
-                        return (
-                          <div
-                            key={item.session_id}
-                            onClick={() => handleSelectSession(item.session_id)}
-                            className={`group rounded-2xl bg-white dark:bg-comic-900/90 border p-3 cursor-pointer transition-all duration-200 flex flex-col items-center text-center shadow-sm hover:shadow-xl relative hover:-translate-y-1 ${
-                              isTomo 
-                                ? 'border-amber-400/40 dark:border-amber-600/30 hover:border-amber-500 hover:shadow-amber-500/10' 
-                                : 'border-slate-200 dark:border-comic-800 hover:border-indigo-500 hover:shadow-indigo-500/10'
-                            }`}
-                          >
-                            {/* Cover Container */}
-                            <div className="w-full aspect-[2/3] bg-slate-100 dark:bg-comic-950 rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700/60 mb-2.5 flex items-center justify-center relative shadow-inner">
-                              {item.cover_thumb ? (
-                                <img
-                                  src={getThumbUrl(item.session_id, item.cover_thumb)}
-                                  alt={item.series}
-                                  className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
-                                  loading="lazy"
-                                />
-                              ) : (
-                                <BookOpen className="w-8 h-8 text-slate-400 dark:text-slate-600" />
-                              )}
-                              
-                              {/* Page Count Badge */}
-                              <span className="absolute bottom-1.5 right-1.5 px-2 py-0.5 rounded-md bg-black/75 backdrop-blur-md text-[10px] text-white font-mono font-medium shadow-sm z-10">
-                                {item.page_count} {t('common.pages')}
+                    <div className="space-y-8">
+                      {groupSessionsBySeries(activeList).map((group) => (
+                        <div key={group.key} className="space-y-3.5">
+                          {/* Series Group Header Banner */}
+                          <div className="flex items-center justify-between py-2.5 px-4 rounded-2xl bg-white dark:bg-comic-900/90 border border-slate-200 dark:border-comic-800 shadow-sm">
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <span className="text-[9px] font-mono font-bold uppercase tracking-wider text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/80 border border-indigo-200 dark:border-indigo-700/60 px-2 py-0.5 rounded-md shrink-0">
+                                SERIE
                               </span>
+                              <h2 className="text-sm sm:text-base font-extrabold text-slate-900 dark:text-white truncate" title={group.name}>
+                                {group.name}
+                              </h2>
+                              <span className="text-xs text-slate-500 dark:text-slate-400 font-medium shrink-0">
+                                ({group.sessions.length} {group.sessions.length === 1 ? 'obra' : 'obras'} {group.totalTomos > 0 ? `· ${group.totalTomos}T` : ''} {group.totalChapters > 0 ? `· ${group.totalChapters}C` : ''} · {group.totalPages} págs)
+                              </span>
+                            </div>
 
-                              {/* Tomo or Chapter Badge */}
-                              {isTomo ? (
-                                <span className="absolute top-1.5 left-1.5 px-2 py-0.5 rounded-md bg-amber-500 text-slate-950 font-black text-[9px] uppercase tracking-wider shadow z-10">
-                                  {t('common.tomo')} {item.volume ? `#${item.volume}` : (item.number ? `#${item.number}` : '')}
-                                </span>
-                              ) : (
-                                <span className="absolute top-1.5 left-1.5 px-2 py-0.5 rounded-md bg-purple-600 text-white font-black text-[9px] uppercase tracking-wider shadow z-10">
-                                  {t('common.chapter')} {item.number ? `#${item.number}` : ''}
-                                </span>
-                              )}
-
-                              {/* Hover Overlay Action */}
-                              <div className="absolute inset-0 bg-indigo-950/60 backdrop-blur-[2px] opacity-0 group-hover:opacity-100 transition duration-200 flex items-center justify-center p-3 z-20">
-                                <span className="px-3 py-1.5 rounded-xl bg-indigo-600 text-white text-xs font-bold shadow-lg flex items-center gap-1.5 transform translate-y-2 group-hover:translate-y-0 transition duration-200">
-                                  <span>{t('common.open') || 'Abrir'}</span>
-                                  <ArrowRight className="w-3.5 h-3.5" />
-                                </span>
-                              </div>
-
-                              {/* Delete Session Button */}
+                            <div className="flex items-center gap-2 shrink-0">
                               <button
                                 type="button"
-                                onClick={(e) => handleDeleteSession(item.session_id, e)}
-                                className="absolute top-1.5 right-1.5 p-1 rounded-md bg-black/60 hover:bg-red-600 text-white opacity-0 group-hover:opacity-100 transition z-30 cursor-pointer"
-                                title={t('sidebar.deleteSessionPrompt') || 'Eliminar de preparación'}
+                                onClick={() => setGlobalRenameTarget({ name: group.name, sessions: group.sessions })}
+                                className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/80 dark:hover:bg-indigo-900 border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 text-xs font-bold transition cursor-pointer active:scale-95 shadow-xs"
+                                title={`Renombrar la serie "${group.name}" en todos sus tomos`}
                               >
-                                <Trash2 className="w-3 h-3" />
+                                <Edit3 className="w-3.5 h-3.5 text-indigo-500" />
+                                <span>Renombrar Serie</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setOnlineSearchDefaultQuery(group.name);
+                                  setIsOnlineSearchOpen(true);
+                                }}
+                                className="p-1.5 rounded-xl text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-300 hover:bg-slate-100 dark:hover:bg-comic-800 transition cursor-pointer"
+                                title={`Buscar portadas oficiales online para "${group.name}"`}
+                              >
+                                <Globe className="w-4 h-4 text-indigo-500" />
                               </button>
                             </div>
-
-                            {/* Series Title */}
-                            <span 
-                              className="text-xs sm:text-sm font-bold text-slate-800 dark:text-white group-hover:text-indigo-600 dark:group-hover:text-indigo-400 truncate w-full transition" 
-                              title={item.series || item.original_filename}
-                            >
-                              {item.series || item.original_filename}
-                            </span>
-                            
-                            {/* Subtitle */}
-                            <div className="flex items-center gap-1.5 mt-1 text-[11px] truncate max-w-full">
-                              {isTomo ? (
-                                <span className="text-amber-700 dark:text-amber-400 font-medium truncate" title={item.title || undefined}>
-                                  {(() => {
-                                    const hasMeaningfulTitle = Boolean(
-                                      item.title &&
-                                      item.title.trim().toLowerCase() !== (item.series || '').trim().toLowerCase() &&
-                                      !/^(?:cap|cap[ií]tulo|ch|chapter)\.?\s*\d+/i.test(item.title.trim())
-                                    );
-                                    const volNum = item.volume ? `#${item.volume}` : (item.number ? `#${item.number}` : '');
-                                    const tomoLabel = volNum ? `${t('common.tomo')} ${volNum}` : t('common.tomo');
-
-                                    if (hasMeaningfulTitle) {
-                                      return volNum ? `${tomoLabel} · ${item.title}` : item.title;
-                                    }
-                                    return tomoLabel;
-                                  })()}
-                                </span>
-                              ) : (
-                                <span className="text-indigo-600 dark:text-indigo-300 font-mono truncate" title={item.title || undefined}>
-                                  {(() => {
-                                    const hasMeaningfulTitle = Boolean(
-                                      item.title &&
-                                      item.title.trim().toLowerCase() !== (item.series || '').trim().toLowerCase()
-                                    );
-                                    const capNum = item.number ? `#${item.number}` : '';
-                                    const capLabel = capNum ? `${t('common.chapter')} ${capNum}` : (item.title || t('common.chapter'));
-
-                                    if (hasMeaningfulTitle && capNum) {
-                                      return `${capLabel} · ${item.title}`;
-                                    }
-                                    return capLabel;
-                                  })()}
-                                </span>
-                              )}
-                            </div>
                           </div>
-                        );
-                      })}
+
+                          {/* Grid of volumes/chapters in this series group */}
+                          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+                            {group.sessions.map((item) => {
+                              const isTomo = isSessionTomo(item);
+                              return (
+                                <div
+                                  key={item.session_id}
+                                  onClick={() => handleSelectSession(item.session_id)}
+                                  className={`group rounded-2xl bg-white dark:bg-comic-900/90 border p-3 cursor-pointer transition-all duration-200 flex flex-col items-center text-center shadow-sm hover:shadow-xl relative hover:-translate-y-1 ${
+                                    isTomo 
+                                      ? 'border-amber-400/40 dark:border-amber-600/30 hover:border-amber-500 hover:shadow-amber-500/10' 
+                                      : 'border-slate-200 dark:border-comic-800 hover:border-indigo-500 hover:shadow-indigo-500/10'
+                                  }`}
+                                >
+                                  {/* Cover Container */}
+                                  <div className="w-full aspect-[2/3] bg-slate-100 dark:bg-comic-950 rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700/60 mb-2.5 flex items-center justify-center relative shadow-inner">
+                                    {item.cover_thumb ? (
+                                      <img
+                                        src={getThumbUrl(item.session_id, item.cover_thumb)}
+                                        alt={item.series}
+                                        className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
+                                        loading="lazy"
+                                      />
+                                    ) : (
+                                      <BookOpen className="w-8 h-8 text-slate-400 dark:text-slate-600" />
+                                    )}
+                                    
+                                    {/* Page Count Badge */}
+                                    <span className="absolute bottom-1.5 right-1.5 px-2 py-0.5 rounded-md bg-black/75 backdrop-blur-md text-[10px] text-white font-mono font-medium shadow-sm z-10">
+                                      {item.page_count} {t('common.pages')}
+                                    </span>
+
+                                    {/* Tomo or Chapter Badge */}
+                                    {isTomo ? (
+                                      <span className="absolute top-1.5 left-1.5 px-2 py-0.5 rounded-md bg-amber-500 text-slate-950 font-black text-[9px] uppercase tracking-wider shadow z-10">
+                                        {t('common.tomo')} {item.volume ? `#${item.volume}` : (item.number ? `#${item.number}` : '')}
+                                      </span>
+                                    ) : (
+                                      <span className="absolute top-1.5 left-1.5 px-2 py-0.5 rounded-md bg-purple-600 text-white font-black text-[9px] uppercase tracking-wider shadow z-10">
+                                        {t('common.chapter')} {item.number ? `#${item.number}` : ''}
+                                      </span>
+                                    )}
+
+                                    {/* Hover Overlay Action */}
+                                    <div className="absolute inset-0 bg-indigo-950/60 backdrop-blur-[2px] opacity-0 group-hover:opacity-100 transition duration-200 flex items-center justify-center p-3 z-20">
+                                      <span className="px-3 py-1.5 rounded-xl bg-indigo-600 text-white text-xs font-bold shadow-lg flex items-center gap-1.5 transform translate-y-2 group-hover:translate-y-0 transition duration-200">
+                                        <span>{t('common.open') || 'Abrir'}</span>
+                                        <ArrowRight className="w-3.5 h-3.5" />
+                                      </span>
+                                    </div>
+
+                                    {/* Quick Rename Button on Card */}
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setQuickRenameTarget(item);
+                                        setQuickRenameParentSeries(item.series || null);
+                                      }}
+                                      className="absolute top-1.5 right-8 p-1 rounded-md bg-black/60 hover:bg-indigo-600 text-white opacity-0 group-hover:opacity-100 transition z-30 cursor-pointer"
+                                      title="Renombrar tomo/capítulo o serie"
+                                    >
+                                      <Edit3 className="w-3 h-3" />
+                                    </button>
+
+                                    {/* Delete Session Button */}
+                                    <button
+                                      type="button"
+                                      onClick={(e) => handleDeleteSession(item.session_id, e)}
+                                      className="absolute top-1.5 right-1.5 p-1 rounded-md bg-black/60 hover:bg-red-600 text-white opacity-0 group-hover:opacity-100 transition z-30 cursor-pointer"
+                                      title={t('sidebar.deleteSessionPrompt') || 'Eliminar de preparación'}
+                                    >
+                                      <Trash2 className="w-3 h-3" />
+                                    </button>
+                                  </div>
+
+                                  {/* Series Title */}
+                                  <span 
+                                    className="text-xs sm:text-sm font-bold text-slate-800 dark:text-white group-hover:text-indigo-600 dark:group-hover:text-indigo-400 truncate w-full transition" 
+                                    title={item.series || item.original_filename}
+                                  >
+                                    {item.series || item.original_filename}
+                                  </span>
+                                  
+                                  {/* Subtitle */}
+                                  <div className="flex items-center gap-1.5 mt-1 text-[11px] truncate max-w-full">
+                                    {isTomo ? (
+                                      <span className="text-amber-700 dark:text-amber-400 font-medium truncate" title={item.title || undefined}>
+                                        {(() => {
+                                          const hasMeaningfulTitle = Boolean(
+                                            item.title &&
+                                            item.title.trim().toLowerCase() !== (item.series || '').trim().toLowerCase() &&
+                                            !/^(?:cap|cap[ií]tulo|ch|chapter)\.?\s*\d+/i.test(item.title.trim())
+                                          );
+                                          const volNum = item.volume ? `#${item.volume}` : (item.number ? `#${item.number}` : '');
+                                          const tomoLabel = volNum ? `${t('common.tomo')} ${volNum}` : t('common.tomo');
+
+                                          if (hasMeaningfulTitle) {
+                                            return volNum ? `${tomoLabel} · ${item.title}` : item.title;
+                                          }
+                                          return tomoLabel;
+                                        })()}
+                                      </span>
+                                    ) : (
+                                      <span className="text-indigo-600 dark:text-indigo-300 font-mono truncate" title={item.title || undefined}>
+                                        {(() => {
+                                          const hasMeaningfulTitle = Boolean(
+                                            item.title &&
+                                            item.title.trim().toLowerCase() !== (item.series || '').trim().toLowerCase()
+                                          );
+                                          const capNum = item.number ? `#${item.number}` : '';
+                                          const capLabel = capNum ? `${t('common.chapter')} ${capNum}` : (item.title || t('common.chapter'));
+
+                                          if (hasMeaningfulTitle && capNum) {
+                                            return `${capLabel} · ${item.title}`;
+                                          }
+                                          return capLabel;
+                                        })()}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
@@ -2040,6 +2136,30 @@ export const App: React.FC = () => {
               setSession(updated);
             }
             loadSessions();
+          }}
+          onOpenRenameGroup={(seriesName) => {
+            const normTarget = cleanSeriesDisplayName(seriesName);
+            const matched = sessionsList.filter(
+              (s) => cleanSeriesDisplayName(s.series || s.original_filename) === normTarget
+            );
+            setGlobalRenameTarget({
+              name: seriesName,
+              sessions: matched
+            });
+          }}
+        />
+      )}
+
+      {/* Global Rename Series / Group Modal */}
+      {globalRenameTarget && (
+        <RenameGroupModal
+          isOpen={Boolean(globalRenameTarget)}
+          oldName={globalRenameTarget.name}
+          sessionCount={globalRenameTarget.sessions.length}
+          sessionIds={globalRenameTarget.sessions.map((s) => s.session_id)}
+          onClose={() => setGlobalRenameTarget(null)}
+          onConfirmRename={async (oldName, newName, sessionIds, updateMatchingTitles) => {
+            await handleRenameGroup(oldName, newName, sessionIds, updateMatchingTitles);
           }}
         />
       )}

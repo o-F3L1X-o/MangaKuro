@@ -953,5 +953,18 @@
     "slicingStrips": "Cortando tiras ({percent}%)",
     "slicingStripsTitle": "Cortando Tiras Webtoon",
     "sliceCompleted": "¡Corte completado!"
+  },
+  "renameGroup": {
+    "title": "Renombrar Serie / Grupo",
+    "subtitle": "Actualiza el nombre de la serie para todos los tomos y capítulos de este grupo.",
+    "currentName": "Nombre actual:",
+    "newNameLabel": "Nuevo nombre de la serie:",
+    "newNamePlaceholder": "Ej: Blue Exorcist",
+    "required": "Obligatorio",
+    "updateTitles": "Actualizar también los títulos que coincidan",
+    "updateTitlesDesc": "Si un tomo tiene como título el nombre de la serie anterior, se actualizará automáticamente.",
+    "infoNote": "Se actualizarán los metadatos (ComicInfo.xml y manifest) de todos los archivos de esta serie instantáneamente.",
+    "applyBtn": "Renombrar grupo",
+    "emptyError": "El nombre de la serie no puede estar vacío."
   }
 }

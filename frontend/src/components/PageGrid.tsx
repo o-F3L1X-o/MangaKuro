@@ -633,7 +633,7 @@ export const PageGrid: React.FC<PageGridProps> = ({
       {/* Unified Sticky Header & Toolbar (Pinned when scrolling down through comic pages) */}
       <div className="sticky top-14 sm:top-16 z-20 bg-slate-50/95 dark:bg-comic-950 backdrop-blur-md pt-2.5 pb-2.5 mb-4 border-b border-slate-200 dark:border-comic-800/80 shadow-xs dark:shadow-2xl -mx-4 lg:-mx-8 px-4 lg:px-8">
         {/* Row 1: Session Title, Volume/Chapter badge & Undo button */}
-        {(sessionTitle || sessionNumber || canUndo) && (
+        {(sessionTitle || sessionNumber || onUndo) && (
           <div className="flex items-center justify-between mb-2 pb-1.5 border-b border-slate-200 dark:border-comic-800/60 min-w-0">
             <div className="flex items-center gap-2.5 min-w-0">
               <h1 className="text-base sm:text-lg font-extrabold text-slate-900 dark:text-white tracking-tight truncate max-w-xl" title={sessionTitle}>
@@ -663,16 +663,20 @@ export const PageGrid: React.FC<PageGridProps> = ({
             </div>
 
             <div className="flex items-center gap-2">
-              {canUndo && onUndo && (
-                <button
-                  onClick={onUndo}
-                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-comic-900 hover:bg-comic-800 text-slate-300 hover:text-white border border-comic-700/80 text-xs font-semibold transition active:scale-95 shrink-0"
-                  title={t('common.undo')}
-                >
-                  <Undo2 className="w-3.5 h-3.5 text-indigo-400" />
-                  <span className="hidden sm:inline">{t('common.undo')}</span>
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={onUndo}
+                disabled={!canUndo || !onUndo}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-semibold transition active:scale-95 shrink-0 ${
+                  canUndo && onUndo
+                    ? 'bg-slate-100 dark:bg-comic-900 hover:bg-slate-200 dark:hover:bg-comic-800 text-slate-800 dark:text-slate-200 hover:text-slate-950 dark:hover:text-white border-slate-300 dark:border-comic-700/80 cursor-pointer shadow-xs'
+                    : 'opacity-40 cursor-not-allowed bg-slate-100/50 dark:bg-comic-950/60 text-slate-400 dark:text-slate-500 border-slate-200 dark:border-comic-800/40'
+                }`}
+                title={canUndo ? t('common.undo') : 'Deshacer (Ctrl+Z) - Sin cambios para deshacer'}
+              >
+                <Undo2 className={`w-3.5 h-3.5 ${canUndo ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-400 dark:text-slate-500'}`} />
+                <span className="hidden sm:inline">{t('common.undo')}</span>
+              </button>
             </div>
           </div>
         )}
@@ -742,15 +746,34 @@ export const PageGrid: React.FC<PageGridProps> = ({
             <span className="text-slate-600 dark:text-slate-400">Total: <strong className="text-slate-900 dark:text-white font-mono">{pages.length}</strong> {t('common.pages')}</span>
           </div>
 
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            title={t('toolbar.addImagesFrontTitle')}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white dark:bg-comic-800 hover:bg-slate-100 dark:hover:bg-comic-700 text-slate-700 dark:text-slate-200 font-medium border border-slate-300 dark:border-comic-700 shadow-sm transition"
-          >
-            <Plus className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
-            <span className="hidden sm:inline">{t('toolbar.addImagesFront')}</span>
-            <span className="sm:hidden">{t('common.upload')}</span>
-          </button>
+          <div className="flex items-center gap-2">
+            {/* Undo action button in tool row */}
+            <button
+              type="button"
+              onClick={onUndo}
+              disabled={!canUndo || !onUndo}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-semibold shadow-xs transition active:scale-95 ${
+                canUndo && onUndo
+                  ? 'bg-white dark:bg-comic-800 hover:bg-slate-100 dark:hover:bg-comic-700 text-slate-800 dark:text-slate-200 border-slate-300 dark:border-comic-700 cursor-pointer'
+                  : 'opacity-40 cursor-not-allowed bg-slate-100 dark:bg-comic-900 text-slate-400 dark:text-slate-600 border-slate-200 dark:border-comic-800'
+              }`}
+              title={canUndo ? t('common.undo') : 'Deshacer (Ctrl+Z) - Sin cambios para deshacer'}
+            >
+              <Undo2 className={`w-3.5 h-3.5 ${canUndo ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-400 dark:text-slate-600'}`} />
+              <span className="hidden sm:inline">{t('common.undoShort') || 'Deshacer'}</span>
+              <span className="text-[10px] opacity-60 hidden md:inline font-mono">(Ctrl+Z)</span>
+            </button>
+
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              title={t('toolbar.addImagesFrontTitle')}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white dark:bg-comic-800 hover:bg-slate-100 dark:hover:bg-comic-700 text-slate-700 dark:text-slate-200 font-medium border border-slate-300 dark:border-comic-700 shadow-sm transition cursor-pointer"
+            >
+              <Plus className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+              <span className="hidden sm:inline">{t('toolbar.addImagesFront')}</span>
+              <span className="sm:hidden">{t('common.upload')}</span>
+            </button>
+          </div>
           <input
             ref={fileInputRef}
             type="file"

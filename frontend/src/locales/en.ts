@@ -304,5 +304,18 @@ export const en: typeof es = {
     minimize: 'Minimize',
     minimizeTitle: 'Minimize to top widget and continue using the app',
     closeModal: 'Close window',
+  },
+  renameGroup: {
+    title: 'Rename Series / Group',
+    subtitle: 'Updates the series name for all volumes and chapters in this group.',
+    currentName: 'Current name:',
+    newNameLabel: 'New series name:',
+    newNamePlaceholder: 'E.g., Blue Exorcist',
+    required: 'Required',
+    updateTitles: 'Also update matching titles',
+    updateTitlesDesc: 'If a volume title matches the previous series name, it will be updated automatically.',
+    infoNote: 'Metadata (ComicInfo.xml and manifest) for all files in this series will be updated instantly.',
+    applyBtn: 'Rename group',
+    emptyError: 'Series name cannot be empty.'
   }
 };
