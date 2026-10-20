@@ -90,7 +90,7 @@ interface SidebarProps {
   onOpenExportGroup?: (group: SeriesGroup) => void;
   onOpenDeleteGroup?: (group: SeriesGroup) => void;
   onOpenDeleteMarked?: (sessions: ComicSessionSummary[]) => void;
-  onOpenOnlineSearch?: (seriesName?: string) => void;
+  onOpenOnlineSearch?: (groupOrSeriesName?: string | SeriesGroup) => void;
   onConfirmVerification?: (sessionId: string) => Promise<void>;
   onConfirmAllPendingVerification?: () => Promise<void>;
   onRevertOverwrite?: (sessionId: string) => Promise<void>;
@@ -520,7 +520,7 @@ interface DroppableSeriesGroupProps {
   onOpenDeleteGroup?: (group: SeriesGroup) => void;
   onOpenRenameGroup?: (group: SeriesGroup) => void;
   onlineSummary?: SeriesOnlineSummary;
-  onOpenOnlineSearch?: (seriesName?: string) => void;
+  onOpenOnlineSearch?: (groupOrSeriesName?: string | SeriesGroup) => void;
   onConfirmVerification?: (sessionId: string) => Promise<void> | void;
   onRevertOverwrite?: (sessionId: string) => Promise<void> | void;
 }
@@ -763,7 +763,7 @@ const DroppableSeriesGroup: React.FC<DroppableSeriesGroupProps> = ({
             type="button"
             onClick={(e) => {
               e.stopPropagation();
-              onOpenOnlineSearch?.(group.name);
+              onOpenOnlineSearch?.(group);
             }}
             className="p-1 rounded-md text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-500/20 transition-colors"
             title={`Buscar portadas oficiales e información online de "${group.name}"`}

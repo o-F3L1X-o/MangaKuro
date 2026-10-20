@@ -208,6 +208,8 @@ export const App: React.FC = () => {
   const [isImageAnalysisOpen, setIsImageAnalysisOpen] = useState(false);
   const [isOnlineSearchOpen, setIsOnlineSearchOpen] = useState(false);
   const [onlineSearchDefaultQuery, setOnlineSearchDefaultQuery] = useState<string>('');
+  const [onlineSearchTargetGroup, setOnlineSearchTargetGroup] = useState<SeriesGroup | null>(null);
+  const [onlineSearchTargetSessionId, setOnlineSearchTargetSessionId] = useState<string | null>(null);
   const [stagingTab, setStagingTab] = useState<'all' | 'tomos' | 'chapters'>('all');
   const [dashboardSearch, setDashboardSearch] = useState('');
   const [uploadDefaultSeries, setUploadDefaultSeries] = useState<string | null>(null);
@@ -974,20 +976,26 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleSaveMetadata = async (newMeta: ComicInfo) => {
-    if (!session) return;
+  const handleSaveMetadata = async (newMeta: ComicInfo, targetSessionId?: string) => {
+    const sid = targetSessionId || session?.session_id;
+    if (!sid) return;
     setIsSaving(true);
     try {
-      const updated = await updateMetadata(session.session_id, newMeta);
-      setSession(updated);
+      const updated = await updateMetadata(sid, newMeta);
+      if (session?.session_id === sid) {
+        setSession(updated);
+      }
       await loadSessions();
+      return updated;
     } finally {
       setIsSaving(false);
     }
   };
 
   const handleOnlineCoverApplied = (updatedManifest: SessionManifest) => {
-    setSession(updatedManifest);
+    if (session?.session_id === updatedManifest.session_id) {
+      setSession(updatedManifest);
+    }
     loadSessions();
   };
 
@@ -1215,7 +1223,17 @@ export const App: React.FC = () => {
         onOpenDonation={() => setIsDonationOpen(true)}
         onOpenImageAnalysis={() => setIsImageAnalysisOpen(true)}
         onOpenOnlineSearch={() => {
-          setOnlineSearchDefaultQuery('');
+          if (session) {
+            const allGroups = groupSessionsBySeries(sessionsList);
+            const parentGroup = allGroups.find((g) => g.sessions.some((s) => s.session_id === session.session_id));
+            setOnlineSearchTargetGroup(parentGroup || null);
+            setOnlineSearchTargetSessionId(session.session_id);
+            setOnlineSearchDefaultQuery(session.metadata?.Series || cleanSeriesDisplayName(session.original_filename) || '');
+          } else {
+            setOnlineSearchTargetGroup(null);
+            setOnlineSearchTargetSessionId(null);
+            setOnlineSearchDefaultQuery('');
+          }
           setIsOnlineSearchOpen(true);
         }}
         canUndo={historyStack.length > 0}
@@ -1276,8 +1294,20 @@ export const App: React.FC = () => {
           onOpenExportGroup={(group) => setExportGroupTarget(group)}
           onOpenDeleteGroup={(group) => setDeleteGroupTarget(group)}
           onOpenDeleteMarked={(marked) => setDeleteMarkedSessions(marked)}
-          onOpenOnlineSearch={(seriesName) => {
-            setOnlineSearchDefaultQuery(seriesName || '');
+          onOpenOnlineSearch={(target) => {
+            if (typeof target === 'string') {
+              const allGroups = groupSessionsBySeries(sessionsList);
+              const foundGroup = allGroups.find(
+                (g) => g.name.toLowerCase() === target.toLowerCase() || g.key === target.toLowerCase()
+              );
+              setOnlineSearchTargetGroup(foundGroup || null);
+              setOnlineSearchTargetSessionId(null);
+              setOnlineSearchDefaultQuery(target);
+            } else if (target) {
+              setOnlineSearchTargetGroup(target);
+              setOnlineSearchTargetSessionId(null);
+              setOnlineSearchDefaultQuery(target.name);
+            }
             setIsOnlineSearchOpen(true);
           }}
           onConfirmVerification={handleConfirmVerification}
@@ -1411,7 +1441,12 @@ export const App: React.FC = () => {
 
                       <button
                         type="button"
-                        onClick={() => setIsOnlineSearchOpen(true)}
+                        onClick={() => {
+                          setOnlineSearchTargetGroup(null);
+                          setOnlineSearchTargetSessionId(null);
+                          setOnlineSearchDefaultQuery('');
+                          setIsOnlineSearchOpen(true);
+                        }}
                         className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-comic-800 dark:hover:bg-comic-700 border border-slate-300 dark:border-comic-700 text-slate-800 dark:text-slate-200 text-xs font-semibold shadow-xs transition cursor-pointer"
                         title="Buscar metadatos e información online"
                       >
@@ -1533,6 +1568,8 @@ export const App: React.FC = () => {
                               <button
                                 type="button"
                                 onClick={() => {
+                                  setOnlineSearchTargetGroup(group);
+                                  setOnlineSearchTargetSessionId(null);
                                   setOnlineSearchDefaultQuery(group.name);
                                   setIsOnlineSearchOpen(true);
                                 }}
@@ -1594,6 +1631,22 @@ export const App: React.FC = () => {
                                         <ArrowRight className="w-3.5 h-3.5" />
                                       </span>
                                     </div>
+
+                                    {/* Online Search Button on Card */}
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setOnlineSearchTargetGroup(group);
+                                        setOnlineSearchTargetSessionId(item.session_id);
+                                        setOnlineSearchDefaultQuery(item.series || group.name);
+                                        setIsOnlineSearchOpen(true);
+                                      }}
+                                      className="absolute top-1.5 right-14.5 p-1 rounded-md bg-black/60 hover:bg-indigo-600 text-white opacity-0 group-hover:opacity-100 transition z-30 cursor-pointer"
+                                      title={`Buscar metadatos y portadas online para este tomo (${item.original_filename})`}
+                                    >
+                                      <Globe className="w-3 h-3" />
+                                    </button>
 
                                     {/* Quick Rename Button on Card */}
                                     <button
@@ -1858,7 +1911,20 @@ export const App: React.FC = () => {
           }}
           onSave={handleSaveMetadata}
           onBatchSave={handleBatchSaveMetadata}
-          onOpenOnlineSearch={() => setIsOnlineSearchOpen(true)}
+          onOpenOnlineSearch={() => {
+            if (session) {
+              const allGroups = groupSessionsBySeries(sessionsList);
+              const parentGroup = allGroups.find((g) => g.sessions.some((s) => s.session_id === session.session_id));
+              setOnlineSearchTargetGroup(parentGroup || null);
+              setOnlineSearchTargetSessionId(session.session_id);
+              setOnlineSearchDefaultQuery(session.metadata?.Series || cleanSeriesDisplayName(session.original_filename) || '');
+            } else {
+              setOnlineSearchTargetGroup(null);
+              setOnlineSearchTargetSessionId(null);
+              setOnlineSearchDefaultQuery('');
+            }
+            setIsOnlineSearchOpen(true);
+          }}
         />
       )}
 
@@ -2189,11 +2255,20 @@ export const App: React.FC = () => {
       {/* Online Search Modal (Metadata, Tomos/Capítulos counts & Covers) */}
       <OnlineSearchModal
         isOpen={isOnlineSearchOpen}
-        onClose={() => setIsOnlineSearchOpen(false)}
+        onClose={() => {
+          setIsOnlineSearchOpen(false);
+          setOnlineSearchTargetGroup(null);
+          setOnlineSearchTargetSessionId(null);
+        }}
         session={session}
+        allSessions={sessionsList}
+        targetGroup={onlineSearchTargetGroup}
+        targetSessionId={onlineSearchTargetSessionId}
         defaultQuery={onlineSearchDefaultQuery}
         onUpdateMetadata={handleSaveMetadata}
+        onBatchUpdateMetadata={handleBatchSaveMetadata}
         onCoverApplied={handleOnlineCoverApplied}
+        onReloadSessions={loadSessions}
       />
 
       {/* Real-time System Performance Monitor Floating Widget */}

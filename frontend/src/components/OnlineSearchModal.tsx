@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   X,
   Search,
@@ -19,46 +19,197 @@ import {
   Check,
   Languages
 } from 'lucide-react';
-import { ComicInfo, OnlineSearchResult, SessionManifest, VolumeCoverItem } from '../types';
+import { ComicInfo, ComicSessionSummary, OnlineSearchResult, SessionManifest, VolumeCoverItem } from '../types';
 import { searchOnlineManga, fetchVolumeCovers, applyOnlineCover, translateOnlineText } from '../api';
+import { cleanSeriesDisplayName, groupSessionsBySeries, SeriesGroup } from '../utils/seriesGrouping';
 import { useTranslation } from '../i18n';
 
 interface OnlineSearchModalProps {
   isOpen: boolean;
   onClose: () => void;
   session: SessionManifest | null;
+  allSessions?: ComicSessionSummary[];
+  targetGroup?: SeriesGroup | null;
+  targetSessionId?: string | null;
   defaultQuery?: string;
-  onUpdateMetadata: (metadata: ComicInfo) => Promise<any>;
+  onUpdateMetadata: (metadata: ComicInfo, targetSessionId?: string) => Promise<any>;
+  onBatchUpdateMetadata?: (sessionIds: string[], metadata: ComicInfo) => Promise<any>;
   onCoverApplied?: (updatedManifest: SessionManifest) => void;
+  onReloadSessions?: () => Promise<any> | void;
 }
+
+const getSessionSeries = (s: ComicSessionSummary | SessionManifest | null | undefined): string => {
+  if (!s) return '';
+  if ('metadata' in s && s.metadata) {
+    return s.metadata.Series || '';
+  }
+  return (s as ComicSessionSummary).series || '';
+};
+
+const getSessionTitle = (s: ComicSessionSummary | SessionManifest | null | undefined): string => {
+  if (!s) return '';
+  if ('metadata' in s && s.metadata) {
+    return s.metadata.Title || s.original_filename || '';
+  }
+  return (s as ComicSessionSummary).title || s.original_filename || '';
+};
+
+const getSessionVolume = (s: ComicSessionSummary | SessionManifest | null | undefined): number | undefined => {
+  if (!s) return undefined;
+  if ('metadata' in s && s.metadata) {
+    if (s.metadata.Volume !== undefined && s.metadata.Volume !== null) {
+      const v = typeof s.metadata.Volume === 'number' ? s.metadata.Volume : parseInt(String(s.metadata.Volume), 10);
+      return isNaN(v) ? undefined : v;
+    }
+  }
+  const vol = (s as ComicSessionSummary).volume;
+  if (vol !== undefined && vol !== null) {
+    const v = typeof vol === 'number' ? vol : parseInt(String(vol), 10);
+    return isNaN(v) ? undefined : v;
+  }
+  return undefined;
+};
 
 export const OnlineSearchModal: React.FC<OnlineSearchModalProps> = ({
   isOpen,
   onClose,
   session,
+  allSessions = [],
+  targetGroup,
+  targetSessionId,
   defaultQuery,
   onUpdateMetadata,
-  onCoverApplied
+  onBatchUpdateMetadata,
+  onCoverApplied,
+  onReloadSessions
 }) => {
   const { t } = useTranslation();
 
-  // Extract initial query from defaultQuery, session Series, or original filename
+  // Compute all series groups from allSessions
+  const allSeriesGroups = useMemo(() => {
+    return allSessions && allSessions.length > 0 ? groupSessionsBySeries(allSessions) : [];
+  }, [allSessions]);
+
+  // Compute active target group
+  const activeGroup = useMemo(() => {
+    if (targetGroup) {
+      const refreshed = allSeriesGroups.find((g) => g.key === targetGroup.key);
+      return refreshed || targetGroup;
+    }
+    if (targetSessionId && allSeriesGroups.length > 0) {
+      const found = allSeriesGroups.find((g) => g.sessions.some((s) => s.session_id === targetSessionId));
+      if (found) return found;
+    }
+    if (session && allSeriesGroups.length > 0) {
+      const found = allSeriesGroups.find((g) => g.sessions.some((s) => s.session_id === session.session_id));
+      if (found) return found;
+    }
+    return null;
+  }, [targetGroup, targetSessionId, session, allSeriesGroups]);
+
+  // Target Destination selection: 'group:<groupKey>' or 'session:<sessionId>'
+  const [currentTarget, setCurrentTarget] = useState<string>('');
+
+  // Synchronize currentTarget when modal opens or targets change
+  useEffect(() => {
+    if (isOpen) {
+      if (targetSessionId) {
+        setCurrentTarget(`session:${targetSessionId}`);
+      } else if (targetGroup) {
+        setCurrentTarget(`group:${targetGroup.key}`);
+      } else if (session) {
+        setCurrentTarget(`session:${session.session_id}`);
+      } else if (activeGroup) {
+        setCurrentTarget(`group:${activeGroup.key}`);
+      } else if (allSeriesGroups.length > 0) {
+        setCurrentTarget(`group:${allSeriesGroups[0].key}`);
+      } else {
+        setCurrentTarget('');
+      }
+    }
+  }, [isOpen, targetSessionId, targetGroup, session?.session_id, activeGroup?.key, allSeriesGroups]);
+
+  // Helper to resolve currently targeted session summary (for filename/titles fallback)
+  const resolvedSessionSummary = useMemo(() => {
+    if (currentTarget.startsWith('session:')) {
+      const sid = currentTarget.replace('session:', '');
+      return allSessions.find((s) => s.session_id === sid) || null;
+    }
+    if (currentTarget.startsWith('group:')) {
+      const gKey = currentTarget.replace('group:', '');
+      const grp = allSeriesGroups.find((g) => g.key === gKey);
+      return grp?.sessions[0] || null;
+    }
+    if (session) return session;
+    return allSessions[0] || null;
+  }, [currentTarget, allSessions, allSeriesGroups, session]);
+
+  // Extract initial query from defaultQuery, active group, session Series, or original filename
   const getInitialQuery = useCallback(() => {
     if (defaultQuery && defaultQuery.trim()) {
       return defaultQuery.trim();
     }
-    if (!session) return '';
-    if (session.metadata.Series && session.metadata.Series.trim()) {
-      return session.metadata.Series.trim();
+    if (activeGroup && activeGroup.name) {
+      return activeGroup.name;
     }
-    // Clean common filename parts
+    if (targetGroup && targetGroup.name) {
+      return targetGroup.name;
+    }
+    if (resolvedSessionSummary) {
+      const sName = getSessionSeries(resolvedSessionSummary);
+      if (sName && sName.trim()) {
+        return sName.trim();
+      }
+      const base = resolvedSessionSummary.original_filename.replace(/\.[^/.]+$/, '');
+      return base
+        .replace(/\[.*?\]|\(.*?\)/g, '')
+        .replace(/[-_]/g, ' ')
+        .replace(/\b(vol|v\d+|tomo|cap|ch\d+)\b.*$/i, '')
+        .trim();
+    }
+    if (!session) return '';
+    const sName = getSessionSeries(session);
+    if (sName && sName.trim()) {
+      return sName.trim();
+    }
     const base = session.original_filename.replace(/\.[^/.]+$/, '');
     return base
       .replace(/\[.*?\]|\(.*?\)/g, '')
       .replace(/[-_]/g, ' ')
       .replace(/\b(vol|v\d+|tomo|cap|ch\d+)\b.*$/i, '')
       .trim();
-  }, [session, defaultQuery]);
+  }, [defaultQuery, activeGroup, targetGroup, resolvedSessionSummary, session]);
+
+  // Helper to match a volume label (e.g., "Volumen 5", "Vol. 5", "5") to a session in library
+  const findMatchingSessionForVolume = useCallback((volumeStr: string): ComicSessionSummary | null => {
+    if (!volumeStr) return null;
+    const numMatch = volumeStr.match(/\b\d+\b/);
+    if (!numMatch) return null;
+    const targetNum = parseInt(numMatch[0], 10);
+
+    const candidates = activeGroup ? activeGroup.sessions : allSessions;
+    if (!candidates || candidates.length === 0) return null;
+
+    // 1. Direct match on volume
+    const matchMeta = candidates.find((s) => {
+      const v = getSessionVolume(s);
+      return v === targetNum;
+    });
+    if (matchMeta) return matchMeta;
+
+    // 2. Filename match
+    const matchFilename = candidates.find((s) => {
+      const fn = s.original_filename || '';
+      const patterns = [
+        new RegExp(`(?:vol|v|tomo|volume|t|cap|c)[\\s._-]*0*${targetNum}(?:[^0-9]|$)`, 'i'),
+        new RegExp(`(?:^|[\\s._-])0*${targetNum}(?:\\.[a-z0-9]+|$)`, 'i')
+      ];
+      return patterns.some((p) => p.test(fn));
+    });
+    if (matchFilename) return matchFilename;
+
+    return null;
+  }, [activeGroup, allSessions]);
 
   const [query, setQuery] = useState('');
   const [sourceFilter, setSourceFilter] = useState<'auto' | 'listadomanga' | 'mangaupdates' | 'mangadex' | 'anilist' | 'kitsu' | 'bangumi' | 'openlibrary'>('auto');
@@ -76,6 +227,8 @@ export const OnlineSearchModal: React.FC<OnlineSearchModalProps> = ({
     result: OnlineSearchResult;
     coverUrl: string;
     applyMetaToo: boolean;
+    suggestedVolume?: string;
+    targetSessionId: string;
   } | null>(null);
   const [isApplyingCover, setIsApplyingCover] = useState(false);
   const [successToast, setSuccessToast] = useState<string | null>(null);
@@ -103,7 +256,7 @@ export const OnlineSearchModal: React.FC<OnlineSearchModalProps> = ({
         performSearch(initQ, sourceFilter, targetLang);
       }
     }
-  }, [isOpen, session?.session_id, getInitialQuery]);
+  }, [isOpen, getInitialQuery]);
 
   const performSearch = async (searchTerm: string, source: string, lang: 'es' | 'en' | 'ja' = targetLang) => {
     if (!searchTerm.trim()) return;
@@ -163,7 +316,7 @@ export const OnlineSearchModal: React.FC<OnlineSearchModalProps> = ({
         console.warn('Backend translation error, falling back to browser translation:', beErr);
       }
 
-      // 2. Client-side browser fallback (uses user's residential IP if Docker container was rate-limited)
+      // 2. Client-side browser fallback
       if (!success) {
         try {
           const clientUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${targetLang}&dt=t&q=${encodeURIComponent(textToTranslate.slice(0, 1500))}`;
@@ -209,6 +362,130 @@ export const OnlineSearchModal: React.FC<OnlineSearchModalProps> = ({
     }
   };
 
+  // 1. Apply Metadata
+  const handleApplyMetadata = async (item: OnlineSearchResult) => {
+    try {
+      const baseMeta = session?.metadata || {};
+
+      let chosenTitle: string = item.title || getSessionSeries(resolvedSessionSummary) || baseMeta.Series || '';
+      if (targetLang === 'es') {
+        chosenTitle = item.title_spanish || item.title || getSessionSeries(resolvedSessionSummary) || baseMeta.Series || '';
+      } else if (targetLang === 'en') {
+        chosenTitle = item.title_english || item.title || getSessionSeries(resolvedSessionSummary) || baseMeta.Series || '';
+      } else {
+        chosenTitle = item.title_romaji || item.title || getSessionSeries(resolvedSessionSummary) || baseMeta.Series || '';
+      }
+
+      const allGenres = item.genres && item.genres.length > 0 ? item.genres.join(', ') : baseMeta.Genre;
+      const allTags = item.tags && item.tags.length > 0 ? item.tags.join(', ') : (baseMeta.Tags || allGenres);
+
+      const isOriginalShown = showOriginalFor[`${item.provider}-${item.id}`];
+      const chosenSummary = (isOriginalShown && item.synopsis_original ? item.synopsis_original : item.synopsis_es) || baseMeta.Summary;
+
+      const updatedMeta: ComicInfo = {
+        ...baseMeta,
+        Series: chosenTitle || baseMeta.Series,
+        AlternateSeries: item.title_english || item.title_romaji || baseMeta.AlternateSeries,
+        Summary: chosenSummary,
+        Year: item.year ? parseInt(String(item.year)) : baseMeta.Year,
+        Genre: allGenres,
+        Tags: allTags,
+        LanguageISO: targetLang,
+        Writer: item.writer || (item.authors && item.authors.length > 0 ? item.authors[0] : baseMeta.Writer),
+        Penciller: item.penciller || (item.authors && item.authors.length > 1 ? item.authors[1] : baseMeta.Penciller),
+        Publisher: item.publisher || baseMeta.Publisher,
+        Imprint: item.imprint || baseMeta.Imprint,
+        CommunityRating: item.community_rating ?? baseMeta.CommunityRating
+      };
+
+      if (item.volumes) {
+        const vNum = parseInt(String(item.volumes));
+        if (!isNaN(vNum) && vNum > 0) {
+          updatedMeta.Count = vNum;
+        }
+      }
+
+      // Check if currentTarget is a whole group
+      if (currentTarget.startsWith('group:')) {
+        const groupKey = currentTarget.replace('group:', '');
+        const targetGrp = allSeriesGroups.find((g) => g.key === groupKey) || activeGroup;
+        if (targetGrp && targetGrp.sessions.length > 0 && onBatchUpdateMetadata) {
+          const sessionIds = targetGrp.sessions.map((s) => s.session_id);
+          await onBatchUpdateMetadata(sessionIds, updatedMeta);
+          setSuccessToast(`¡Metadatos de "${updatedMeta.Series}" aplicados a los ${sessionIds.length} tomos de la serie!`);
+          await onReloadSessions?.();
+          setTimeout(() => setSuccessToast(null), 3500);
+          return;
+        }
+      }
+
+      // Single session application
+      let targetSid: string | undefined;
+      if (currentTarget.startsWith('session:')) {
+        targetSid = currentTarget.replace('session:', '');
+      } else if (targetSessionId) {
+        targetSid = targetSessionId;
+      } else if (session) {
+        targetSid = session.session_id;
+      } else if (resolvedSessionSummary) {
+        targetSid = resolvedSessionSummary.session_id;
+      }
+
+      if (!targetSid) {
+        setError('Por favor selecciona un tomo o grupo de destino antes de aplicar metadatos.');
+        return;
+      }
+
+      await onUpdateMetadata(updatedMeta, targetSid);
+      setSuccessToast(`¡Metadatos de "${updatedMeta.Series}" aplicados con éxito!`);
+      await onReloadSessions?.();
+      setTimeout(() => setSuccessToast(null), 3500);
+    } catch (err: any) {
+      setError(err.message || 'Error al aplicar metadatos');
+    }
+  };
+
+  // 2. Open Cover Mode Dialog
+  const handleSelectCoverForApplication = (
+    item: OnlineSearchResult,
+    coverUrl: string,
+    applyMetaToo: boolean,
+    suggestedVolume?: string
+  ) => {
+    let targetSid = '';
+    if (suggestedVolume) {
+      const matched = findMatchingSessionForVolume(suggestedVolume);
+      if (matched) {
+        targetSid = matched.session_id;
+      }
+    }
+    if (!targetSid) {
+      if (currentTarget.startsWith('session:')) {
+        targetSid = currentTarget.replace('session:', '');
+      } else if (currentTarget.startsWith('group:')) {
+        const groupKey = currentTarget.replace('group:', '');
+        const grp = allSeriesGroups.find((g) => g.key === groupKey) || activeGroup;
+        if (grp && grp.sessions.length > 0) {
+          targetSid = grp.sessions[0].session_id;
+        }
+      } else if (targetSessionId) {
+        targetSid = targetSessionId;
+      } else if (session) {
+        targetSid = session.session_id;
+      } else if (resolvedSessionSummary) {
+        targetSid = resolvedSessionSummary.session_id;
+      }
+    }
+
+    setPendingCoverTarget({
+      result: item,
+      coverUrl,
+      applyMetaToo,
+      suggestedVolume,
+      targetSessionId: targetSid
+    });
+  };
+
   // Direct Cover Application (URL or Base64 Clipboard)
   const handleApplyDirectCover = (imageUrlToUse: string) => {
     if (!imageUrlToUse.trim()) return;
@@ -216,7 +493,7 @@ export const OnlineSearchModal: React.FC<OnlineSearchModalProps> = ({
       id: 'custom_url',
       provider: 'auto' as any,
       provider_label: 'Portada Personalizada / URL Directa',
-      title: session?.metadata.Series || session?.original_filename || 'Portada Personalizada',
+      title: getSessionSeries(resolvedSessionSummary) || resolvedSessionSummary?.original_filename || session?.metadata?.Series || session?.original_filename || 'Portada Personalizada',
       synonyms: [],
       synopsis_es: '',
       synopsis_has_es: false,
@@ -227,11 +504,7 @@ export const OnlineSearchModal: React.FC<OnlineSearchModalProps> = ({
       has_volume_covers: false,
       cover_url: imageUrlToUse.trim()
     };
-    setPendingCoverTarget({
-      result: mockResult,
-      coverUrl: imageUrlToUse.trim(),
-      applyMetaToo: false
-    });
+    handleSelectCoverForApplication(mockResult, imageUrlToUse.trim(), false);
   };
 
   const handlePasteFromClipboard = async () => {
@@ -239,7 +512,7 @@ export const OnlineSearchModal: React.FC<OnlineSearchModalProps> = ({
       setIsPastingImage(true);
       const clipboardItems = await navigator.clipboard.read();
       for (const item of clipboardItems) {
-        const imageType = item.types.find(t => t.startsWith('image/'));
+        const imageType = item.types.find((t) => t.startsWith('image/'));
         if (imageType) {
           const blob = await item.getType(imageType);
           const reader = new FileReader();
@@ -266,90 +539,70 @@ export const OnlineSearchModal: React.FC<OnlineSearchModalProps> = ({
     }
   };
 
-  // 1. Apply Metadata only
-  const handleApplyMetadata = async (item: OnlineSearchResult) => {
-    if (!session) return;
-    try {
-      const currentMeta = session.metadata || {};
-
-      let chosenTitle: string = item.title || currentMeta.Series || '';
-      if (targetLang === 'es') {
-        chosenTitle = item.title_spanish || item.title || currentMeta.Series || '';
-      } else if (targetLang === 'en') {
-        chosenTitle = item.title_english || item.title || currentMeta.Series || '';
-      } else {
-        chosenTitle = item.title_romaji || item.title || currentMeta.Series || '';
-      }
-
-      const allGenres = item.genres && item.genres.length > 0 ? item.genres.join(', ') : currentMeta.Genre;
-      const allTags = item.tags && item.tags.length > 0 ? item.tags.join(', ') : (currentMeta.Tags || allGenres);
-
-      const isOriginalShown = showOriginalFor[`${item.provider}-${item.id}`];
-      const chosenSummary = (isOriginalShown && item.synopsis_original ? item.synopsis_original : item.synopsis_es) || currentMeta.Summary;
-
-      const updatedMeta: ComicInfo = {
-        ...currentMeta,
-        Series: chosenTitle || currentMeta.Series,
-        AlternateSeries: item.title_english || item.title_romaji || currentMeta.AlternateSeries,
-        Summary: chosenSummary,
-        Year: item.year ? parseInt(String(item.year)) : currentMeta.Year,
-        Genre: allGenres,
-        Tags: allTags,
-        LanguageISO: targetLang,
-        Writer: item.writer || (item.authors && item.authors.length > 0 ? item.authors[0] : currentMeta.Writer),
-        Penciller: item.penciller || (item.authors && item.authors.length > 1 ? item.authors[1] : currentMeta.Penciller),
-        Publisher: item.publisher || currentMeta.Publisher,
-        Imprint: item.imprint || currentMeta.Imprint,
-        CommunityRating: item.community_rating ?? currentMeta.CommunityRating
-      };
-
-      if (item.volumes) {
-        const vNum = parseInt(String(item.volumes));
-        if (!isNaN(vNum) && vNum > 0) {
-          updatedMeta.Count = vNum;
-        }
-      }
-
-      await onUpdateMetadata(updatedMeta);
-      setSuccessToast(`¡Metadatos de "${updatedMeta.Series}" aplicados con éxito!`);
-      setTimeout(() => setSuccessToast(null), 3500);
-    } catch (err: any) {
-      setError(err.message || 'Error al aplicar metadatos');
-    }
-  };
-
-  // 2. Open Cover Mode Dialog
-  const handleSelectCoverForApplication = (item: OnlineSearchResult, coverUrl: string, applyMetaToo: boolean) => {
-    setPendingCoverTarget({
-      result: item,
-      coverUrl,
-      applyMetaToo
-    });
-  };
-
   // 3. Confirm Cover Application with chosen mode (Insert vs Replace)
   const handleConfirmCoverAction = async (mode: 'insert_first' | 'replace_first') => {
-    if (!session || !pendingCoverTarget) return;
+    if (!pendingCoverTarget || !pendingCoverTarget.targetSessionId) {
+      setError('Por favor selecciona un tomo de destino para la portada.');
+      return;
+    }
+    const targetSid = pendingCoverTarget.targetSessionId;
     setIsApplyingCover(true);
     try {
       // If user chose "Apply Meta Too", apply metadata first
       if (pendingCoverTarget.applyMetaToo) {
-        await handleApplyMetadata(pendingCoverTarget.result);
+        const currentMeta = (session && session.session_id === targetSid) ? session.metadata : {};
+        const item = pendingCoverTarget.result;
+        let chosenTitle = item.title || currentMeta.Series || '';
+        if (targetLang === 'es') chosenTitle = item.title_spanish || item.title || currentMeta.Series || '';
+        else if (targetLang === 'en') chosenTitle = item.title_english || item.title || currentMeta.Series || '';
+        else chosenTitle = item.title_romaji || item.title || currentMeta.Series || '';
+
+        const allGenres = item.genres && item.genres.length > 0 ? item.genres.join(', ') : currentMeta.Genre;
+        const allTags = item.tags && item.tags.length > 0 ? item.tags.join(', ') : (currentMeta.Tags || allGenres);
+        const isOriginalShown = showOriginalFor[`${item.provider}-${item.id}`];
+        const chosenSummary = (isOriginalShown && item.synopsis_original ? item.synopsis_original : item.synopsis_es) || currentMeta.Summary;
+
+        const updatedMeta: ComicInfo = {
+          ...currentMeta,
+          Series: chosenTitle || currentMeta.Series,
+          AlternateSeries: item.title_english || item.title_romaji || currentMeta.AlternateSeries,
+          Summary: chosenSummary,
+          Year: item.year ? parseInt(String(item.year)) : currentMeta.Year,
+          Genre: allGenres,
+          Tags: allTags,
+          LanguageISO: targetLang,
+          Writer: item.writer || (item.authors && item.authors.length > 0 ? item.authors[0] : currentMeta.Writer),
+          Penciller: item.penciller || (item.authors && item.authors.length > 1 ? item.authors[1] : currentMeta.Penciller),
+          Publisher: item.publisher || currentMeta.Publisher,
+          Imprint: item.imprint || currentMeta.Imprint,
+          CommunityRating: item.community_rating ?? currentMeta.CommunityRating
+        };
+        if (item.volumes) {
+          const vNum = parseInt(String(item.volumes));
+          if (!isNaN(vNum) && vNum > 0) updatedMeta.Count = vNum;
+        }
+
+        await onUpdateMetadata(updatedMeta, targetSid);
       }
 
-      // Download and apply cover
-      const updatedManifest = await applyOnlineCover(session.session_id, {
+      // Download and apply cover to targetSid
+      const updatedManifest = await applyOnlineCover(targetSid, {
         image_url: pendingCoverTarget.coverUrl,
         mode: mode,
         custom_name: `${pendingCoverTarget.result.title} - Portada Oficial.jpg`
       });
 
-      onCoverApplied?.(updatedManifest);
+      if (session && session.session_id === targetSid) {
+        onCoverApplied?.(updatedManifest);
+      }
+
+      await onReloadSessions?.();
 
       const actionText = mode === 'insert_first' ? 'insertada como página #1' : 'sustituyendo la primera página actual';
-      setSuccessToast(`¡Portada oficial ${actionText} con éxito!`);
+      const targetSessionItem = allSessions.find((s) => s.session_id === targetSid);
+      const targetName = targetSessionItem ? (targetSessionItem.title || targetSessionItem.original_filename) : 'tomo';
+      setSuccessToast(`¡Portada oficial aplicada a "${targetName}" (${actionText}) con éxito!`);
       setPendingCoverTarget(null);
-      setViewingVolumeCoversFor(null);
       setTimeout(() => setSuccessToast(null), 4000);
     } catch (err: any) {
       setError(err.message || 'Error al descargar y aplicar la portada online');
@@ -401,10 +654,64 @@ export const OnlineSearchModal: React.FC<OnlineSearchModalProps> = ({
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg hover:bg-comic-800 text-slate-400 hover:text-white transition"
+            className="p-1.5 rounded-lg hover:bg-comic-800 text-slate-400 hover:text-white transition cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
+        </div>
+
+        {/* Target Destination Bar */}
+        <div className="px-6 py-2.5 bg-comic-900/90 border-b border-comic-800 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">
+          <div className="flex items-center gap-2 text-xs flex-1 min-w-0">
+            <span className="font-bold text-slate-300 flex items-center gap-1.5 shrink-0">
+              <Bookmark className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Destino de aplicación:</span>
+            </span>
+            <select
+              value={currentTarget}
+              onChange={(e) => setCurrentTarget(e.target.value)}
+              className="px-3 py-1.5 rounded-xl bg-comic-950 border border-comic-700 text-white text-xs font-semibold focus:border-indigo-500 focus:outline-none transition max-w-full sm:max-w-md truncate"
+            >
+              {allSeriesGroups.length > 0 ? (
+                allSeriesGroups.map((grp) => (
+                  <optgroup key={grp.key} label={`📚 Serie: ${grp.name} (${grp.sessions.length} tomos)`}>
+                    <option value={`group:${grp.key}`}>
+                      ⚡ Toda la serie: {grp.name} ({grp.sessions.length} tomos en lote)
+                    </option>
+                    {grp.sessions.map((s) => {
+                      const vol = s.volume ? `Tomo ${s.volume}` : (s.item_type === 'capitulo' ? 'Capítulo' : 'Tomo');
+                      return (
+                        <option key={s.session_id} value={`session:${s.session_id}`}>
+                          &nbsp;&nbsp;📖 {vol}: {s.title || s.original_filename}
+                        </option>
+                      );
+                    })}
+                  </optgroup>
+                ))
+              ) : session ? (
+                <option value={`session:${session.session_id}`}>
+                  📖 {session.metadata?.Series || session.original_filename}
+                </option>
+              ) : (
+                <option value="">(Sin elementos cargados)</option>
+              )}
+            </select>
+          </div>
+
+          {/* Current Target Status Tag */}
+          <div className="flex items-center gap-1.5 text-[11px] text-slate-400 shrink-0">
+            {currentTarget.startsWith('group:') ? (
+              <span className="px-2 py-0.5 rounded-md bg-purple-950/80 border border-purple-800 text-purple-300 font-bold flex items-center gap-1">
+                <Layers className="w-3 h-3 text-purple-400" />
+                <span>Modo Serie Completa (Lote)</span>
+              </span>
+            ) : currentTarget.startsWith('session:') ? (
+              <span className="px-2 py-0.5 rounded-md bg-indigo-950/80 border border-indigo-800 text-indigo-300 font-bold flex items-center gap-1">
+                <BookOpen className="w-3 h-3 text-indigo-400" />
+                <span>Tomo Individual</span>
+              </span>
+            ) : null}
+          </div>
         </div>
 
         {/* Success Toast Banner */}
@@ -431,7 +738,7 @@ export const OnlineSearchModal: React.FC<OnlineSearchModalProps> = ({
                 <button
                   type="button"
                   onClick={() => setQuery('')}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white text-xs p-1"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white text-xs p-1 cursor-pointer"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
@@ -570,7 +877,7 @@ export const OnlineSearchModal: React.FC<OnlineSearchModalProps> = ({
                   <button
                     type="button"
                     onClick={() => setViewingVolumeCoversFor(null)}
-                    className="px-2.5 py-1 rounded-lg bg-comic-800 hover:bg-comic-700 text-slate-300 text-xs font-semibold flex items-center gap-1 transition"
+                    className="px-2.5 py-1 rounded-lg bg-comic-800 hover:bg-comic-700 text-slate-300 text-xs font-semibold flex items-center gap-1 transition cursor-pointer"
                   >
                     <span>← Volver a resultados</span>
                   </button>
@@ -589,39 +896,48 @@ export const OnlineSearchModal: React.FC<OnlineSearchModalProps> = ({
                 </div>
               ) : (
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3.5">
-                  {volumeCoversList.map((cov, idx) => (
-                    <div
-                      key={idx}
-                      className="bg-comic-900 border border-comic-800 rounded-xl overflow-hidden flex flex-col group hover:border-indigo-500/60 transition shadow-md"
-                    >
-                      <div className="relative aspect-2/3 bg-black/40 overflow-hidden">
-                        <img
-                          src={cov.cover_url}
-                          alt={cov.volume}
-                          className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
-                          loading="lazy"
-                        />
-                        <span className="absolute top-2 left-2 px-2 py-0.5 rounded bg-black/80 backdrop-blur-xs text-white font-bold text-[10px] shadow">
-                          {cov.volume}
-                        </span>
-                        {cov.locale_label && (
-                          <span className="absolute top-2 right-2 px-1.5 py-0.5 rounded bg-black/80 backdrop-blur-xs text-amber-300 font-semibold text-[9px] shadow">
-                            {cov.locale_label}
+                  {volumeCoversList.map((cov, idx) => {
+                    const matchedSession = findMatchingSessionForVolume(cov.volume);
+                    return (
+                      <div
+                        key={idx}
+                        className="bg-comic-900 border border-comic-800 rounded-xl overflow-hidden flex flex-col group hover:border-indigo-500/60 transition shadow-md"
+                      >
+                        <div className="relative aspect-2/3 bg-black/40 overflow-hidden">
+                          <img
+                            src={cov.cover_url}
+                            alt={cov.volume}
+                            className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
+                            loading="lazy"
+                          />
+                          <span className="absolute top-2 left-2 px-2 py-0.5 rounded bg-black/80 backdrop-blur-xs text-white font-bold text-[10px] shadow">
+                            {cov.volume}
                           </span>
-                        )}
+                          {cov.locale_label && (
+                            <span className="absolute top-2 right-2 px-1.5 py-0.5 rounded bg-black/80 backdrop-blur-xs text-amber-300 font-semibold text-[9px] shadow">
+                              {cov.locale_label}
+                            </span>
+                          )}
+                          {matchedSession && (
+                            <span className="absolute bottom-2 left-2 px-1.5 py-0.5 rounded-md bg-emerald-950/90 border border-emerald-600 text-emerald-300 text-[10px] font-bold shadow flex items-center gap-1 backdrop-blur-xs">
+                              <Check className="w-3 h-3 text-emerald-400" />
+                              <span>En biblioteca</span>
+                            </span>
+                          )}
+                        </div>
+                        <div className="p-2.5 flex flex-col gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => handleSelectCoverForApplication(viewingVolumeCoversFor, cov.cover_url_full || cov.cover_url, false, cov.volume)}
+                            className="w-full py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-bold transition flex items-center justify-center gap-1 cursor-pointer"
+                          >
+                            <ImagePlus className="w-3.5 h-3.5" />
+                            <span>Usar Portada</span>
+                          </button>
+                        </div>
                       </div>
-                      <div className="p-2.5 flex flex-col gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => handleSelectCoverForApplication(viewingVolumeCoversFor, cov.cover_url_full || cov.cover_url, false)}
-                          className="w-full py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-bold transition flex items-center justify-center gap-1"
-                        >
-                          <ImagePlus className="w-3.5 h-3.5" />
-                          <span>Usar Portada</span>
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -657,7 +973,7 @@ export const OnlineSearchModal: React.FC<OnlineSearchModalProps> = ({
                       <button
                         type="button"
                         onClick={() => handleOpenVolumeCovers(item)}
-                        className="w-full py-1 px-1.5 rounded-md bg-purple-950/80 hover:bg-purple-900 border border-purple-800/80 text-purple-300 text-[10px] font-bold transition flex items-center justify-center gap-1"
+                        className="w-full py-1 px-1.5 rounded-md bg-purple-950/80 hover:bg-purple-900 border border-purple-800/80 text-purple-300 text-[10px] font-bold transition flex items-center justify-center gap-1 cursor-pointer"
                         title="Ver portadas individuales de cada tomo"
                       >
                         <Layers className="w-3 h-3 text-purple-400" />
@@ -899,7 +1215,7 @@ export const OnlineSearchModal: React.FC<OnlineSearchModalProps> = ({
               <div>
                 <h4 className="text-base font-bold text-white">¿Cómo deseas aplicar esta portada?</h4>
                 <p className="text-xs text-slate-300 mt-1">
-                  Elige si deseas conservarla como nueva página inicial o reemplazar la existente:
+                  Verifica el tomo de destino y cómo deseas incorporar la portada:
                 </p>
               </div>
 
@@ -912,13 +1228,57 @@ export const OnlineSearchModal: React.FC<OnlineSearchModalProps> = ({
                 />
               </div>
 
+              {/* Destination Tomo / Session Selector */}
+              <div className="text-left bg-comic-950/80 p-3 rounded-xl border border-comic-700/80 space-y-1.5">
+                <div className="flex items-center justify-between text-[11px] font-bold text-slate-300">
+                  <span className="flex items-center gap-1.5">
+                    <Bookmark className="w-3.5 h-3.5 text-indigo-400" />
+                    <span>Tomo / Cómic destino:</span>
+                  </span>
+                  {pendingCoverTarget.suggestedVolume && (
+                    <span className="text-[10px] text-emerald-400 font-mono font-semibold">
+                      Detectado: {pendingCoverTarget.suggestedVolume}
+                    </span>
+                  )}
+                </div>
+                <select
+                  value={pendingCoverTarget.targetSessionId}
+                  onChange={(e) => setPendingCoverTarget({
+                    ...pendingCoverTarget,
+                    targetSessionId: e.target.value
+                  })}
+                  className="w-full px-2.5 py-1.5 rounded-lg bg-comic-900 border border-comic-600 text-white text-xs font-semibold focus:border-indigo-500 focus:outline-none"
+                >
+                  {(activeGroup ? activeGroup.sessions : allSessions).map((s) => {
+                    const volNum = s.volume ?? '';
+                    const volLabel = volNum ? `[Tomo ${volNum}] ` : '';
+                    return (
+                      <option key={s.session_id} value={s.session_id}>
+                        {volLabel}{s.title || s.original_filename}
+                      </option>
+                    );
+                  })}
+                  {activeGroup && allSessions.some((s) => !activeGroup.sessions.some((gs) => gs.session_id === s.session_id)) && (
+                    <optgroup label="Otras series en biblioteca">
+                      {allSessions
+                        .filter((s) => !activeGroup.sessions.some((gs) => gs.session_id === s.session_id))
+                        .map((s) => (
+                          <option key={s.session_id} value={s.session_id}>
+                            {s.series ? `[${s.series}] ` : ''}{s.original_filename}
+                          </option>
+                        ))}
+                    </optgroup>
+                  )}
+                </select>
+              </div>
+
               <div className="grid grid-cols-1 gap-2.5 pt-1">
                 {/* Mode 1: Insert as Page #1 */}
                 <button
                   type="button"
-                  disabled={isApplyingCover}
+                  disabled={isApplyingCover || !pendingCoverTarget.targetSessionId}
                   onClick={() => handleConfirmCoverAction('insert_first')}
-                  className="p-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center justify-start gap-3 transition shadow-lg shadow-indigo-600/30 cursor-pointer"
+                  className="p-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-bold flex items-center justify-start gap-3 transition shadow-lg shadow-indigo-600/30 cursor-pointer"
                 >
                   <div className="p-1.5 rounded-lg bg-white/20">
                     <ImagePlus className="w-4 h-4" />
@@ -932,9 +1292,9 @@ export const OnlineSearchModal: React.FC<OnlineSearchModalProps> = ({
                 {/* Mode 2: Replace Page #1 */}
                 <button
                   type="button"
-                  disabled={isApplyingCover}
+                  disabled={isApplyingCover || !pendingCoverTarget.targetSessionId}
                   onClick={() => handleConfirmCoverAction('replace_first')}
-                  className="p-3 rounded-xl bg-comic-800 hover:bg-comic-700 text-slate-200 border border-comic-700 text-xs font-bold flex items-center justify-start gap-3 transition cursor-pointer"
+                  className="p-3 rounded-xl bg-comic-800 hover:bg-comic-700 disabled:opacity-50 text-slate-200 border border-comic-700 text-xs font-bold flex items-center justify-start gap-3 transition cursor-pointer"
                 >
                   <div className="p-1.5 rounded-lg bg-comic-700">
                     <RefreshCw className="w-4 h-4 text-amber-400" />
@@ -951,7 +1311,7 @@ export const OnlineSearchModal: React.FC<OnlineSearchModalProps> = ({
                   type="button"
                   onClick={() => setPendingCoverTarget(null)}
                   disabled={isApplyingCover}
-                  className="px-4 py-1.5 rounded-lg text-slate-400 hover:text-white text-xs font-semibold transition"
+                  className="px-4 py-1.5 rounded-lg text-slate-400 hover:text-white text-xs font-semibold transition cursor-pointer"
                 >
                   Cancelar
                 </button>
@@ -966,7 +1326,7 @@ export const OnlineSearchModal: React.FC<OnlineSearchModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 rounded-xl bg-comic-800 hover:bg-comic-700 text-slate-300 font-semibold transition"
+            className="px-4 py-2 rounded-xl bg-comic-800 hover:bg-comic-700 text-slate-300 font-semibold transition cursor-pointer"
           >
             Cerrar
           </button>
